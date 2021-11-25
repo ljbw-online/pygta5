@@ -1,7 +1,7 @@
 # direct inputs
 # source to this solution and code:
-# http://stackoverflow.com/questions/14489013/simulate-python-keypresses-for-controlling-a-game
-# http://www.gamespp.com/directx/directInputKeyboardScanCodes.html
+# https://stackoverflow.com/questions/14489013/simulate-python-keypresses-for-controlling-a-game
+# https://www.gamespp.com/directx/directInputKeyboardScanCodes.html
 
 import ctypes
 import time
@@ -13,11 +13,6 @@ W = 0x11
 A = 0x1E
 S = 0x1F
 D = 0x20
-
-NP_2 = 0x50
-NP_4 = 0x4B
-NP_6 = 0x4D
-NP_8 = 0x48
 
 # C struct redefinitions 
 PUL = ctypes.POINTER(ctypes.c_ulong)

@@ -2,14 +2,13 @@ import numpy as np
 import cv2
 import time
 import os
-import random
 import win32api
 
-from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window, WINDOW_NAME,
-                    PAUSE_KEY, QUIT_AND_SAVE_KEY, model, MODEL_NAME, TURNING_THRESHOLD, DATA_FILE_NAME,
-                    W, A, S, D, PressKey, ReleaseKey, release_keys, CORRECTING_KEYS, BRAKING_THRESHOLD,
-                    FORWARD_THRESHOLD, QUIT_WITHOUT_SAVING_KEY, OUTPUT_LENGTH, DISPLAY_WIDTH,
-                    DISPLAY_HEIGHT, recent_keys, RESIZE_WIDTH, RESIZE_HEIGHT, w,a,s,d,wa,wd,sa,sd,nk)
+from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window,
+                    PAUSE_KEY, QUIT_AND_SAVE_KEY, model, MODEL_NAME, DATA_FILE_NAME,
+                    W, A, S, D, PressKey, ReleaseKey, release_keys, CORRECTING_KEYS,
+                    QUIT_WITHOUT_SAVING_KEY, OUTPUT_LENGTH, DISPLAY_WIDTH,
+                    DISPLAY_HEIGHT, output_row, RESIZE_WIDTH, RESIZE_HEIGHT, w, a, s, d, wa, wd, sa, sd, nk)
 
 def key_check():
     keys = []
@@ -17,30 +16,6 @@ def key_check():
         if win32api.GetAsyncKeyState(ord(key)):
             keys.append(key)
     return keys
-
-def keys_to_output(output):
-    # Convert keys to a multi-hot array [W,A,S,D]
-    if 'W' in keys:
-        output[0] = 1
-    if 'A' in keys:
-        output[1] = 1
-    if 'S' in keys:
-        output[2] = 1
-    if 'D' in keys:
-        output[3] = 1
-    return output
-
-np.set_printoptions(precision=3)
-start_time = 0
-output = np.zeros(OUTPUT_LENGTH)
-new_data = np.empty((1000,INPUT_HEIGHT,INPUT_WIDTH),dtype='uint8')
-new_data_counter = 0
-forwards = np.empty((1000,INPUT_HEIGHT,INPUT_WIDTH),dtype='uint8')
-forwards_counter = 0
-left_right_brakes = np.empty((1000,INPUT_HEIGHT,INPUT_WIDTH),dtype='uint8')
-correcting = False
-paused = True
-print('Press {} to unpause'.format(PAUSE_KEY))
 
 model_exists = os.path.isfile('{}.index'.format(MODEL_NAME))
 if model_exists:
@@ -52,6 +27,21 @@ if previous_data_exists:
     print('Loading previously collected data')
     training_data = np.load(DATA_FILE_NAME)
 
+np.set_printoptions(precision=3)
+start_time = 0
+output = np.zeros(OUTPUT_LENGTH,dtype='uint8')
+new_data = np.empty((1000,INPUT_HEIGHT + 1,INPUT_WIDTH),dtype='uint8')
+new_data_counter = 0
+forwards = new_data.copy()
+forwards_counter = 0
+forwards_populated = False
+default_rng = np.random.default_rng()
+planned_outputs = np.zeros((4,OUTPUT_LENGTH),dtype='uint8')
+planned_outputs_counter = 0
+
+correcting = False
+paused = True
+print('Press {} to unpause'.format(PAUSE_KEY))
 key_check() # Flush key presses
 
 while True:
@@ -76,9 +66,10 @@ while True:
     elif QUIT_AND_SAVE_KEY in keys:
         if previous_data_exists:
             training_data = np.concatenate((training_data, new_data[:new_data_counter]))
-            print('Training data at {} frames'.format(len(training_data)))
-            print('Saving correction data')
-            np.save(DATA_FILE_NAME, training_data)
+        else: # This allows us to save new data before it reaches 1000 frames
+            training_data = new_data[:new_data_counter]
+        print('Saving at {} frames of training data'.format(len(training_data)))
+        np.save(DATA_FILE_NAME, training_data)
         cv2.destroyAllWindows()
         release_keys()
         break
@@ -88,9 +79,8 @@ while True:
         release_keys()
         break
     else:
-        if correcting:
+        if correcting and model_exists: # If model doesn't exist then stay in correcting state, to capture no-key's
             correcting = False
-            # print('Back under AI control')
 
     if not paused:
         start_time = time.time()
@@ -99,7 +89,6 @@ while True:
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         # resize to something a bit more acceptable for a CNN
         frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT))
-        frame = np.concatenate((frame, recent_keys))
         # frame.shape == (RESIZE_HEIGHT + OUTPUT_LENGTH, RESIZE_WIDTH)
 
         cv2.imshow('ALANN', cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT), interpolation=cv2.INTER_NEAREST))
@@ -108,48 +97,56 @@ while True:
             break
 
         if model_exists:
-            output = model.predict([frame.reshape(INPUT_WIDTH, INPUT_HEIGHT, 1)])[0]
-            # print(output)
+            current_output = model.predict([frame.reshape(INPUT_WIDTH, INPUT_HEIGHT, 1)])[0]
+            index = np.argmax(current_output)
+            current_output[:] = 0
+            current_output[index] = 1
+            planned_outputs[planned_outputs_counter] = current_output
+            # Set output to the prediction from four frames ago. This is so that there is symmetry
+            # between how the model was trained and how it is driving.
+            output = planned_outputs[(planned_outputs_counter + 3) % 4]
+            planned_outputs_counter += 1
+            planned_outputs_counter %= 4
         else:
-            output = np.zeros(OUTPUT_LENGTH)
+            output = nk.copy()
 
         # If the prediction is saying the opposite of the correction then we
         # need to undo the prediction in addition to applying the correction
         if CORRECTING_KEYS[0] in keys:
             if output[1] or output[4] or output[6]: # if a or wa or sa
-                output = wa
+                output = wa.copy()
             elif output[3] or output[5] or output[7]: # if d or wd or sd
-                output = wd
+                output = wd.copy()
             else:
-                output = w
+                output = w.copy()
 
         if CORRECTING_KEYS[1] in keys:
             if output[0] or output[4]: # if w or wa
-                output = wa
+                output = wa.copy()
             elif output[3] or output[5]: # if d or wd
-                output = wa
+                output = wa.copy()
             elif output[6] or output[7]: # if sa or sd
-                output = sa
+                output = sa.copy()
             else:
-                output = a
+                output = a.copy()
 
         if CORRECTING_KEYS[2] in keys:
             if output[1] or output[4] or output[6]: # if a or wa or sa
-                output = sa
+                output = sa.copy()
             elif output[3] or output[5] or output[7]: # if d or wd or sd
-                output = sd
+                output = sd.copy()
             else:
-                output = s
+                output = s.copy()
 
         if CORRECTING_KEYS[3] in keys:
             if output[0] or output[4]:  # if w or wa
-                output = wd
+                output = wd.copy()
             elif output[3] or output[5]:  # if d or wd
-                output = wd
-            elif output[6] or output[7]:  # if sa or sd
-                output = sd
+                output = wd.copy()
+            elif output[2] or output[6] or output[7]:  # if s or sa or sd
+                output = sd.copy()
             else:
-                output = d
+                output = d.copy()
 
         if np.argmax(output) == 0:
             ReleaseKey(A)
@@ -198,19 +195,20 @@ while True:
             ReleaseKey(D)
 
         if correcting:
-            # Some pixels in the bottom right are used to store the key states
-            # for the current frame in the training data
-            frame[-OUTPUT_LENGTH:,-1] = output
+            output_row[0,:OUTPUT_LENGTH] = output
+            frame = np.concatenate((frame, output_row))
 
             if np.array_equal(output,w):
                 forwards[forwards_counter] = frame
                 forwards_counter += 1
+                if forwards_counter == 1000:
+                    forwards_populated = True
                 forwards_counter %= 1000
             else:
                 new_data[new_data_counter] = frame
                 new_data_counter += 1
-                if (forwards_counter % 1000) and not (new_data_counter == 1000):
-                    new_data[new_data_counter] = np.random.choice(forwards[:forwards_counter])
+                if forwards_populated and not (new_data_counter == 1000):
+                    new_data[new_data_counter] = forwards[default_rng.integers(1000)]
                     new_data_counter += 1
 
             if new_data_counter == 1000:
@@ -223,21 +221,7 @@ while True:
                     training_data = new_data.copy()
                     new_data_counter = 0
                     previous_data_exists = True
-
-        output_index = np.argmax(output)
-        output = np.zeros(OUTPUT_LENGTH,dtype='uint8')
-        output[output_index] = 1
-
-        # Shift all values to the right
-        recent_keys = np.roll(recent_keys, 1, axis=1)
-        # Add the key states from this frame to the first column
-        for i in range(0, OUTPUT_LENGTH):
-            recent_keys[-i, 0] = output[i] * 255
-
-            # During training these pixels in the bottom right are always black
-            # because the key states are stored there. So they should also be black
-            # when we run the model.
-            frame[i - OUTPUT_LENGTH, -1] = 0
+                    print(training_data.dtype)
 
         duration = time.time() - start_time
         time.sleep(max(0, 1/18 - duration))

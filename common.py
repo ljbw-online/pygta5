@@ -32,7 +32,7 @@ def alexnet(input_width, input_height, lr, output_length):
     network = fully_connected(network, output_length, activation='softmax')
     network = regression(
         network,
-        optimizer='momentum',
+        optimizer='adam',
         loss='categorical_crossentropy',
         learning_rate=lr,
         name='targets'
@@ -41,8 +41,8 @@ def alexnet(input_width, input_height, lr, output_length):
         network,
         # checkpoint_path='model_alexnet',
         # max_checkpoints=1,
-        tensorboard_verbose=2,
-        tensorboard_dir='log'
+        # tensorboard_verbose=2,
+        # tensorboard_dir='log'
     )
     return model
 
@@ -152,10 +152,10 @@ RESIZE_WIDTH = 112
 RESIZE_HEIGHT = 63
 OUTPUT_LENGTH = 9
 INPUT_WIDTH = RESIZE_WIDTH
-INPUT_HEIGHT = RESIZE_HEIGHT + OUTPUT_LENGTH
+INPUT_HEIGHT = RESIZE_HEIGHT
 LR = 1e-3
 EPOCHS = 2
-MODEL_NAME = 'Airtug'
+MODEL_NAME = 'Taxi'
 model = alexnet(INPUT_WIDTH, INPUT_HEIGHT, LR, OUTPUT_LENGTH)
 
 TURNING_THRESHOLD = 0.1
@@ -170,7 +170,7 @@ QUIT_WITHOUT_SAVING_KEY = '5'
 UPSCALE_FACTOR = 8 # imshow window should be 896 by 504
 DISPLAY_WIDTH = INPUT_WIDTH * UPSCALE_FACTOR
 DISPLAY_HEIGHT = INPUT_HEIGHT * UPSCALE_FACTOR
-recent_keys = np.zeros((OUTPUT_LENGTH,INPUT_WIDTH), dtype='uint8')
+output_row = np.zeros((1,INPUT_WIDTH), dtype='uint8')
 
 eye9 = np.eye(9,dtype='uint8')
 w = eye9[0]

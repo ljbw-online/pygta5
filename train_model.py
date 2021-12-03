@@ -1,7 +1,6 @@
 import numpy as np
 import os
-import random
-from common import INPUT_WIDTH, INPUT_HEIGHT, LR, EPOCHS, MODEL_NAME, model, DATA_FILE_NAME, OUTPUT_LENGTH
+from common import INPUT_WIDTH, INPUT_HEIGHT, EPOCHS, MODEL_NAME, model, DATA_FILE_NAME, OUTPUT_LENGTH
 
 if os.path.isfile('{}.index'.format(MODEL_NAME)):
     print('Loading previous model')
@@ -14,28 +13,22 @@ if os.path.isfile('training_inputs.npy'):
     validation_outputs = np.load('validation_outputs.npy')
 else:
     data = np.load(DATA_FILE_NAME)
-    # onehots = np.load('onehot_outputs.npy')
-    # data_with_onehots = np.empty((len(data),INPUT_HEIGHT,INPUT_WIDTH))
 
-    # for i in range(len(data)):
-    #     # Needs a 5 OUTPUTS_LENGTH is now larger
-    #     z = np.zeros((5,INPUT_WIDTH),dtype='uint8')
-    #     z[-1, :OUTPUT_LENGTH] = onehots[i]
-    #     data_with_onehots[i] = np.concatenate((data[i],z))
-
+    # Shift outputs along by 4 so that the model is predicting what the keypress should be four
+    # frames in the future. This reflects the fact that a human presses the key that corresponds to
+    # the frame they saw about a fifth of a second ago.
+    data[:,-1] = np.roll(data[:,-1],-4,axis=0)
+    data = data[4:] # Get rid of the first four frames which now have incorrect output_rows
     np.random.shuffle(data)
-    validation_index = round(len(data) * 0.07)
+    validation_index = round(len(data) * 0.1)
     training_inputs = data[validation_index:]
     validation_inputs = data[:validation_index]
 
-    training_outputs = training_inputs[:, -OUTPUT_LENGTH:, -1]
-    training_inputs[:, -OUTPUT_LENGTH:, -1] = 0
-    # training_inputs[:, -1, :OUTPUT_LENGTH] = 0
+    training_outputs = training_inputs[:, -1, :OUTPUT_LENGTH]
+    training_inputs = training_inputs[:, :-1]
 
-    validation_outputs = validation_inputs[:, -OUTPUT_LENGTH:, -1]
-    # print(validation_inputs.shape,validation_outputs.shape,training_inputs.shape,training_outputs.shape)
-    validation_inputs[:, -OUTPUT_LENGTH:, -1] = 0
-    # validation_inputs[:, -1, :OUTPUT_LENGTH] = 0
+    validation_outputs = validation_inputs[:, -1, :OUTPUT_LENGTH]
+    validation_inputs = validation_inputs[:, :-1]
 
     training_inputs = training_inputs.reshape(-1, INPUT_WIDTH, INPUT_HEIGHT, 1)
     validation_inputs = validation_inputs.reshape(-1, INPUT_WIDTH, INPUT_HEIGHT, 1)
@@ -49,6 +42,7 @@ model.fit(
     , snapshot_step=500
     , show_metric=True
     , run_id=MODEL_NAME
+    , batch_size=256
 )
 
 model.save(MODEL_NAME)
@@ -58,7 +52,7 @@ model.save(MODEL_NAME)
 # These will keep being used even if more training data has been added. Will just have new validation data everytime
 # for now.
 # if not os.path.isfile('training_inputs.npy'):
-#     # Save here so that the same validation set is used across multiple runs of this file
+#     # Save here so that the same validation set is used across multiple runs of this script
 #     # This is at the end so that we only save if the rest of the file succeeds. Otherwise
 #     # I have to keep remembering to delete the possibly-bad npy files that were created.
 #     np.save('training_inputs.npy', training_inputs)

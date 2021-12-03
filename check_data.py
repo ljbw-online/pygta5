@@ -7,6 +7,11 @@ from time import time, sleep
 from common import (DATA_FILE_NAME, DISPLAY_WIDTH, DISPLAY_HEIGHT, OUTPUT_LENGTH,
     w,a,s,d,wa,wd,sa,sd,nk)
 
+# import sys
+# sys.path.append('C:/Users/ljbw/Documents/Python/.venv/pygta5/Tutorial Codes/Part 8-13 code')
+# import importlib
+# importlib.reload(common)
+
 if __name__ == '__main__':
     training_data = np.load(DATA_FILE_NAME)
 

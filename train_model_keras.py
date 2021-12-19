@@ -53,27 +53,40 @@ lefts_and_rights = lefts_and_rights.astype('float32') / 255.0
 
 test_split_index = round(len(lefts_and_rights) * 0.25)
 train_imgs = lefts_and_rights[test_split_index:,:-1]
+train_imgs = np.expand_dims(train_imgs, axis=3) # So that Conv2D will accept it
 print('train_imgs.shape', train_imgs.shape)
 test_imgs = lefts_and_rights[:test_split_index,:-1]
+test_imgs = np.expand_dims(test_imgs, axis=3)
 
 train_labels = labels[test_split_index:]
 test_labels = labels[:test_split_index]
 
 model = tf.keras.Sequential([
-    tf.keras.layers.Flatten(input_shape=(INPUT_HEIGHT, INPUT_WIDTH)),
-    tf.keras.layers.Dense(INPUT_WIDTH * INPUT_HEIGHT,
-                          activation='relu',
-                          kernel_regularizer=tf.keras.regularizers.l2(0.0001)),
-    tf.keras.layers.Dropout(0.5),
+    tf.keras.layers.Conv2D(16, 3, padding='same', activation='relu', input_shape=(INPUT_HEIGHT, INPUT_WIDTH, 1)),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(32, 3, padding='same', activation='relu'),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu'),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(128, activation='relu'),
+    #kernel_regularizer=tf.keras.regularizers.l2(0.0001)
+    #tf.keras.layers.Dropout(0.5),
     tf.keras.layers.Dense(2),
-    tf.keras.layers.Softmax()
+    tf.keras.layers.Activation(tf.keras.activations.sigmoid)
 ])
 
 model.compile(optimizer='adam',
-              loss=tf.keras.losses.SparseCategoricalCrossentropy(),
-              metrics=['accuracy'])
+              loss=tf.keras.losses.MeanAbsoluteError(),
+              metrics=['mean_absolute_error'])
 
-model.fit(train_imgs, train_labels, epochs=5)
+model.fit(train_imgs, train_labels, epochs=2)
 
 test_loss, test_acc = model.evaluate(test_imgs, test_labels, verbose=2)
 print('\nTest accuracy:', test_acc)
+
+print(model.predict(test_imgs[:10]),test_labels[:10])
+
+# mae = tf.keras.losses.MeanAbsoluteError(tf.keras.losses.Reduction.SUM)
+# mae([[0.,0.]],[[5.,1.]]) == 3.0
+# Elementwise subtraction followed by sum

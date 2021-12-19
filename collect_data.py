@@ -1,11 +1,12 @@
 import numpy as np
 import cv2
-import time
+from time import time, sleep
 import os
 import win32api
 
+from network import model
 from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window,
-                    PAUSE_KEY, QUIT_AND_SAVE_KEY, model, MODEL_NAME, DATA_FILE_NAME,
+                    PAUSE_KEY, QUIT_AND_SAVE_KEY, MODEL_NAME, DATA_FILE_NAME,
                     W, A, S, D, PressKey, ReleaseKey, release_keys, CORRECTING_KEYS,
                     QUIT_WITHOUT_SAVING_KEY, OUTPUT_LENGTH, DISPLAY_WIDTH,
                     DISPLAY_HEIGHT, output_row, RESIZE_WIDTH, RESIZE_HEIGHT, w, a, s, d, wa, wd, sa, sd, nk)
@@ -29,6 +30,7 @@ if previous_data_exists:
 
 np.set_printoptions(precision=3)
 start_time = 0
+last_correcting_time = 0
 output = np.zeros(OUTPUT_LENGTH,dtype='uint8')
 new_data = np.empty((1000,INPUT_HEIGHT + 1,INPUT_WIDTH),dtype='uint8')
 new_data_counter = 0
@@ -51,7 +53,7 @@ while True:
         if paused:
             paused = False
             print('Unpaused')
-            time.sleep(1)
+            sleep(1)
         else:
             release_keys()
             paused = True
@@ -59,7 +61,7 @@ while True:
             print('new_data_counter',new_data_counter)
             if previous_data_exists:
                 print('Training data at {} frames'.format(len(training_data)))
-            time.sleep(1)
+            sleep(1)
     elif set(CORRECTING_KEYS) & set(keys):
         if not correcting and not paused:
             correcting = True
@@ -83,7 +85,7 @@ while True:
             correcting = False
 
     if not paused:
-        start_time = time.time()
+        start_time = time()
 
         frame = get_gta_window()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
@@ -91,7 +93,15 @@ while True:
         frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT))
         # frame.shape == (RESIZE_HEIGHT + OUTPUT_LENGTH, RESIZE_WIDTH)
 
-        cv2.imshow('ALANN', cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT), interpolation=cv2.INTER_NEAREST))
+        display_frame = cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT), interpolation=cv2.INTER_NEAREST)
+        if correcting:
+            last_correcting_time = time()
+        if ((time() - last_correcting_time) < 1) or (not model_exists):
+            text_top_left = (round(DISPLAY_WIDTH*0.1),round(DISPLAY_HEIGHT*0.9))
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(display_frame,'Under human control',text_top_left,font,2,(255,255,255),3)
+
+        cv2.imshow('ALANN', display_frame)
         if cv2.waitKey(25) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
             break
@@ -223,6 +233,6 @@ while True:
                     previous_data_exists = True
                     print(training_data.dtype)
 
-        duration = time.time() - start_time
-        time.sleep(max(0, 1/18 - duration))
+        duration = time() - start_time
+        sleep(max(0, 1/18 - duration))
 

@@ -102,7 +102,8 @@ else:
     training_inputs = training_inputs.reshape(-1, INPUT_WIDTH, INPUT_HEIGHT, 1)
     validation_inputs = validation_inputs.reshape(-1, INPUT_WIDTH, INPUT_HEIGHT, 1)
 
-    np.save('training_inputs',training_inputs)
-    np.save('training_outputs',training_outputs)
-    np.save('validation_inputs',validation_inputs)
-    np.save('validation_outputs',validation_outputs)
+    if __name__ == '__main__':
+        np.save('training_inputs',training_inputs)
+        np.save('training_outputs',training_outputs)
+        np.save('validation_inputs',validation_inputs)
+        np.save('validation_outputs',validation_outputs)

@@ -1,66 +1,108 @@
 import numpy as np
 import cv2
-import time
-import random
+from time import time, sleep
 
-from directkeys import PressKey,ReleaseKey, W, A, S, D
-from getkeys import key_check
-from common import INPUT_WIDTH, INPUT_HEIGHT, MODEL_NAME, model, get_gta_window, PAUSE_KEY, QUIT_AND_SAVE_KEY
+from common import (INPUT_WIDTH, INPUT_HEIGHT, MODEL_NAME, get_gta_window, PAUSE_KEY, QUIT_WITHOUT_SAVING_KEY, PressKey,
+     W, A, S, D, key_check, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys)
+# from train_model_keras import model
+from tensorflow.keras.models import load_model
 
-model.load(MODEL_NAME)
-
+model = load_model(MODEL_NAME)
 threshold = 0.1
+last_loop_time = time()
+last_correcting_time = time()
+paused = True
+correcting = False
+output = np.zeros(4, dtype='bool')
+key_check()  # flush keys
+print('Press {} to unpause'.format(PAUSE_KEY))
+while True:
+    keys = key_check()
 
-def main():
-    last_time = time.time()
+    if PAUSE_KEY in keys:
+        if paused:
+            paused = False
+            sleep(1)
+        else:
+            paused = True
+            release_keys()
+            sleep(1)
+    elif set(CORRECTING_KEYS) & set(keys):
+        if not correcting and not paused:
+            correcting = True
+    elif QUIT_WITHOUT_SAVING_KEY in keys:
+        release_keys()
+        cv2.destroyAllWindows()
+        break
+    else:
+        if correcting:
+            correcting = False
+            output[:] = False
 
-    paused = True
-    print('Press {} to unpause'.format(PAUSE_KEY))
-    while True:
-        if not paused:
-            # print('loop took {} seconds'.format(time.time()-last_time))
-            last_time = time.time()
+    if not paused:
+        last_loop_time = time()
 
-            screen = get_gta_window()
-            screen = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
-            screen = cv2.resize(screen, (INPUT_WIDTH, INPUT_HEIGHT))
+        frame = get_gta_window()
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        frame = cv2.resize(frame, (INPUT_WIDTH, INPUT_HEIGHT))
+        frame = frame.astype('float32') / 255.0
 
-            prediction = model.predict([screen.reshape(INPUT_WIDTH, INPUT_HEIGHT, 1)])[0]
-            # print(prediction)
+        prediction = model.predict(frame.reshape(1, INPUT_HEIGHT, INPUT_WIDTH, 1))[0]
 
-            PressKey(W)
+        if correcting:
+            last_correcting_time = time()
 
-            if prediction[1] > (1 - threshold) and prediction[3] < threshold:
-                PressKey(A)
-                print('A')
-            else:
-                ReleaseKey(A)
+        display_frame = cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT), interpolation=cv2.INTER_NEAREST)
+        if (time() - last_correcting_time) < 1:
+            text_top_left = (round(DISPLAY_WIDTH*0.1),round(DISPLAY_HEIGHT*0.9))
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(display_frame,'Under human control',text_top_left,font,2,(255,255,255),3)
 
-            if prediction[1] < threshold and prediction[3] > (1 - threshold):
-                PressKey(D)
-                print('D')
-            else:
-                ReleaseKey(D)
-
-        keys = key_check()
-
-        # p pauses game and can get annoying.
-        if PAUSE_KEY in keys:
-            if paused:
-                paused = False
-                time.sleep(1)
-            else:
-                paused = True
-                ReleaseKey(W)
-                ReleaseKey(A)
-                ReleaseKey(S)
-                ReleaseKey(D)
-                time.sleep(1)
-        elif QUIT_AND_SAVE_KEY in keys:
-            ReleaseKey(W)
-            ReleaseKey(A)
-            ReleaseKey(S)
-            ReleaseKey(D)
+        cv2.imshow('ALANN', display_frame)
+        if cv2.waitKey(25) & 0xFF == ord('q'):
+            cv2.destroyAllWindows()
             break
 
-main()
+        output[:] = False
+
+        argmax = np.argmax(prediction)
+        output[argmax] = True
+
+        if correcting:
+            # for i in range(len(CORRECTING_KEYS)):
+            #     output[i] = output[i] or (CORRECTING_KEYS[i] in keys)
+
+            if CORRECTING_KEYS[0] in keys:
+                output[:] = False
+                output[0] = True
+
+            if CORRECTING_KEYS[1] in keys:
+                output[:] = False
+                output[1] = True
+
+            if CORRECTING_KEYS[3] in keys:
+                output[:] = False
+                output[2] = True
+
+            if CORRECTING_KEYS[2] in keys:
+                output[:] = False
+                output[3] = True
+
+        release_keys()
+        if output[0]:
+            PressKey(W)
+
+        if output[1]:
+            PressKey(W)
+            PressKey(A)
+
+        if output[2]:
+            PressKey(W)
+            PressKey(D)
+
+        if output[3]:
+            PressKey(S)
+
+        duration = time() - last_loop_time
+        # print(1/duration)
+        sleep(max(0, round(1/18 - duration)))

@@ -2,21 +2,13 @@ import numpy as np
 import cv2
 from time import time, sleep
 import os
-import win32api
 
 from network import model
 from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window,
                     PAUSE_KEY, QUIT_AND_SAVE_KEY, MODEL_NAME, DATA_FILE_NAME,
                     W, A, S, D, PressKey, ReleaseKey, release_keys, CORRECTING_KEYS,
                     QUIT_WITHOUT_SAVING_KEY, OUTPUT_LENGTH, DISPLAY_WIDTH,
-                    DISPLAY_HEIGHT, output_row, RESIZE_WIDTH, RESIZE_HEIGHT, w, a, s, d, wa, wd, sa, sd, nk)
-
-def key_check():
-    keys = []
-    for key in "ABCDEFGHIJKLMNOPQRSTUVWXYZ 123456789":
-        if win32api.GetAsyncKeyState(ord(key)):
-            keys.append(key)
-    return keys
+                    DISPLAY_HEIGHT, output_row, RESIZE_WIDTH, RESIZE_HEIGHT, w, a, s, d, wa, wd, sa, sd, nk, key_check)
 
 model_exists = os.path.isfile('{}.index'.format(MODEL_NAME))
 if model_exists:

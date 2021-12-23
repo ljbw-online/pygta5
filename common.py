@@ -73,8 +73,8 @@ if platform.system() == 'Windows':
 
     class Input_I(ctypes.Union):
         _fields_ = [("ki", KeyBdInput),
-                     ("mi", MouseInput),
-                     ("hi", HardwareInput)]
+                    ("mi", MouseInput),
+                    ("hi", HardwareInput)]
 
     class Input(ctypes.Structure):
         _fields_ = [("type", ctypes.c_ulong),
@@ -102,13 +102,13 @@ if platform.system() == 'Windows':
         ReleaseKey(S)
         ReleaseKey(D)
 
-import win32api
-def key_check():
-    keys = []
-    for key in "ABCDEFGHIJKLMNOPQRSTUVWXYZ 123456789":
-        if win32api.GetAsyncKeyState(ord(key)):
-            keys.append(key)
-    return keys
+    import win32api
+    def key_check():
+        keys = []
+        for key in "ABCDEFGHIJKLMNOPQRSTUVWXYZ 123456789":
+            if win32api.GetAsyncKeyState(ord(key)):
+                keys.append(key)
+        return keys
 
 CAPTURE_REGION = (160,170,480,270) # topleft_x, topleft_y, width, height
 RESIZE_WIDTH = 112

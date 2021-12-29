@@ -2,6 +2,10 @@ import numpy as np
 from numpy import array_equal as ae
 import platform
 
+# How to reload a module in an interactive session:
+# import importlib
+# importlib.reload(common)
+
 if platform.system() == 'Windows':
     import win32gui, win32ui, win32con
     def get_gta_window(region=None):
@@ -175,3 +179,48 @@ def oh_to_mh(array):
         return mh_sd
     elif ae(array, nk):
         return mh_nk
+
+def oh_stats(data):
+    forwards = 0
+    lefts = 0
+    brakes = 0
+    rights = 0
+    forward_lefts = 0
+    forward_rights = 0
+    brake_lefts = 0
+    brake_rights = 0
+    nokeys = 0
+
+    for keystate in data[:,-1,:OUTPUT_LENGTH]:
+        if np.array_equal(keystate,w):
+            forwards += 1
+        elif np.array_equal(keystate,a):
+            lefts += 1
+        elif np.array_equal(keystate,s):
+            brakes += 1
+        elif np.array_equal(keystate,d):
+            rights += 1
+        elif np.array_equal(keystate,wa):
+            forward_lefts += 1
+        elif np.array_equal(keystate,wd):
+            forward_rights += 1
+        elif np.array_equal(keystate,sa):
+            brake_lefts += 1
+        elif np.array_equal(keystate,sd):
+            brake_rights += 1
+        elif np.array_equal(keystate,nk):
+            nokeys += 1
+        else:
+            print('huh?',keystate)
+
+    print('forwards',forwards)
+    print('lefts',lefts)
+    print('brakes',brakes)
+    print('rights',rights)
+    print('forward_lefts',forward_lefts)
+    print('forward_rights',forward_rights)
+    print('brake_lefts',brake_lefts)
+    print('brake_rights',brake_rights)
+    print('nokeys',nokeys)
+
+    return [forwards,lefts,brakes,lefts,forward_lefts,forward_rights,brake_lefts,brake_rights,nokeys]

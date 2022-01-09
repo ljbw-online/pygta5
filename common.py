@@ -114,10 +114,10 @@ if platform.system() == 'Windows':
                 keys.append(key)
         return keys
 
-CAPTURE_REGION = (160,170,480,270) # topleft_x, topleft_y, width, height
+CAPTURE_REGION = (160, 170, 480, 270)  # topleft_x, topleft_y, width, height
 RESIZE_WIDTH = 112
 RESIZE_HEIGHT = 63
-OUTPUT_LENGTH = 9
+OUTPUT_LENGTH = 4
 INPUT_WIDTH = RESIZE_WIDTH
 INPUT_HEIGHT = RESIZE_HEIGHT
 LR = 1e-3
@@ -128,18 +128,18 @@ TURNING_THRESHOLD = 0.1
 BRAKING_THRESHOLD = 0.1
 FORWARD_THRESHOLD = 0.1
 WINDOW_NAME = 'Grand Theft Auto V'
-DATA_FILE_NAME = 'collected_data.npy'
-BALANCED_FILE_NAME = 'balanced_data.npy'
+INITIAL_DATA_FILE_NAME = 'initial_data_uint8.npy'
+CORRECTION_FILE_NAME = 'correction_data.npy'
 PAUSE_KEY = 'Z'
-CORRECTING_KEYS = ['I','J','K','L']
+CORRECTING_KEYS = ['I', 'J', 'K', 'L']
 QUIT_AND_SAVE_KEY = 'X'
 QUIT_WITHOUT_SAVING_KEY = '5'
-UPSCALE_FACTOR = 8 # imshow window should be 896 by 504
+UPSCALE_FACTOR = 8  # imshow window should be 896 by 504
 DISPLAY_WIDTH = INPUT_WIDTH * UPSCALE_FACTOR
 DISPLAY_HEIGHT = INPUT_HEIGHT * UPSCALE_FACTOR
-output_row = np.zeros((1,INPUT_WIDTH), dtype='uint8')
+output_row = np.zeros((1, INPUT_WIDTH), dtype='float32')
 
-eye9 = np.eye(9,dtype='uint8')
+eye9 = np.eye(9, dtype='uint8')
 w = eye9[0]
 a = eye9[1]
 s = eye9[2]
@@ -224,3 +224,9 @@ def oh_stats(data):
     print('nokeys',nokeys)
 
     return [forwards,lefts,brakes,lefts,forward_lefts,forward_rights,brake_lefts,brake_rights,nokeys]
+
+
+oh4_w = np.array([1, 0, 0, 0], dtype='float32')
+oh4_wa = np.array([0, 1, 0, 0], dtype='float32')
+oh4_wd = np.array([0, 0, 1, 0], dtype='float32')
+oh4_s = np.array([0, 0, 0, 1], dtype='float32')

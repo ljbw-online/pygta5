@@ -1,6 +1,6 @@
 import numpy as np
 from numpy import array_equal as ae
-from common import OUTPUT_LENGTH, w, a, s, d, wa, wd, sa, sd, INPUT_WIDTH, INPUT_HEIGHT
+from common import w, a, s, d, wa, wd, sa, sd, INPUT_WIDTH, INPUT_HEIGHT
 
 collected_data = np.load('collected_data.npy')
 
@@ -19,7 +19,7 @@ lefts = np.zeros_like(collected_data)
 rights = np.zeros_like(collected_data)
 
 for frame in collected_data:
-    output = frame[-1,:OUTPUT_LENGTH]
+    output = frame[-1,:9]
     if ae(output, w):
         forwards[forward_count] = frame
         forward_count += 1
@@ -64,7 +64,7 @@ left_count = 0
 right_count = 0
 brake_count = 0
 for i in range(len(lars_and_fabs)):
-    output = lars_and_fabs[i,-1,:OUTPUT_LENGTH]
+    output = lars_and_fabs[i,-1,:9]
     if ae(output, w):
         labels[i] = [1,0,0,0]
         forward_count += 1

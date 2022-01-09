@@ -8,13 +8,13 @@ from common import (INPUT_WIDTH, INPUT_HEIGHT, MODEL_NAME, get_gta_window, PAUSE
 from tensorflow.keras.models import load_model
 
 model = load_model(MODEL_NAME)
-threshold = 0.1
-last_loop_time = time()
-last_correcting_time = time()
+last_loop_time = 0
+last_correcting_time = 0
 paused = True
 correcting = False
 output = np.zeros(4, dtype='bool')
 key_check()  # flush keys
+
 print('Press {} to unpause'.format(PAUSE_KEY))
 while True:
     keys = key_check()
@@ -69,8 +69,6 @@ while True:
         output[argmax] = True
 
         if correcting:
-            # for i in range(len(CORRECTING_KEYS)):
-            #     output[i] = output[i] or (CORRECTING_KEYS[i] in keys)
 
             if CORRECTING_KEYS[0] in keys:
                 output[:] = False
@@ -91,18 +89,14 @@ while True:
         release_keys()
         if output[0]:
             PressKey(W)
-
-        if output[1]:
+        elif output[1]:
             PressKey(W)
             PressKey(A)
-
-        if output[2]:
+        elif output[2]:
             PressKey(W)
             PressKey(D)
-
-        if output[3]:
+        elif output[3]:
             PressKey(S)
 
         duration = time() - last_loop_time
-        # print(1/duration)
         sleep(max(0, round(1/18 - duration)))

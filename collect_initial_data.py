@@ -1,24 +1,24 @@
 import numpy as np
-from numpy import array_equal as ae
 import cv2
 from time import time, sleep
 
 from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window,
-                    PAUSE_KEY, QUIT_AND_SAVE_KEY, INITIAL_DATA_FILE_NAME,
+                    PAUSE_KEY, SAVE_AND_QUIT_KEY, INITIAL_DATA_FILE_NAME,
                     PressKey, release_keys, CORRECTING_KEYS,
                     QUIT_WITHOUT_SAVING_KEY, OUTPUT_LENGTH, DISPLAY_WIDTH,
                     DISPLAY_HEIGHT, RESIZE_WIDTH, RESIZE_HEIGHT, key_check,
-                    W, A, S, D)
+                    W, A, S, D, SAVE_AND_CONTINUE_KEY)
 
 np.set_printoptions(precision=3)
+FRAMES_PER_OUTPUT = 1000
 
 start_time = 0
 last_correcting_time = 0
 output = np.zeros(OUTPUT_LENGTH, dtype='bool')
-output_row = np.zeros((1,INPUT_WIDTH), dtype='uint8')
-initial_data_uint8 = np.empty((40000, INPUT_HEIGHT + 1, INPUT_WIDTH), dtype='uint8')
+output_row = np.zeros((1, INPUT_WIDTH), dtype='uint8')
+# initial_data_uint8 = np.empty((FRAMES_PER_OUTPUT * OUTPUT_LENGTH, INPUT_HEIGHT + 1, INPUT_WIDTH), dtype='uint8')
 initial_data_index = 0
-forwards = np.zeros((1000, INPUT_HEIGHT + 1, INPUT_WIDTH), dtype='uint8')
+forwards = np.zeros((FRAMES_PER_OUTPUT, INPUT_HEIGHT + 1, INPUT_WIDTH), dtype='uint8')
 f_buffer_index = 0
 f_count = 0
 lefts = forwards.copy()
@@ -45,15 +45,20 @@ while True:
             sleep(1)
         else:
             release_keys()
-            sleep(1)
             paused = True
             print('Paused')
-            print('new_data_counter', initial_data_index)
+            print('initial_data_index', initial_data_index)
             print(f_buffer_index, l_buffer_index, r_buffer_index, b_buffer_index)
-    elif QUIT_AND_SAVE_KEY in keys:
-        training_data = initial_data_uint8[:initial_data_index]
-        print('Saving {} frames'.format(len(training_data)))
-        np.save(INITIAL_DATA_FILE_NAME, training_data)
+            sleep(1)
+    elif SAVE_AND_CONTINUE_KEY in keys:
+        initial_data_uint8 = np.concatenate((forwards, lefts, rights, brakes))
+        print('Saving {} frames'.format(len(initial_data_uint8)))
+        np.save(INITIAL_DATA_FILE_NAME, initial_data_uint8)
+        sleep(1)
+    elif SAVE_AND_QUIT_KEY in keys:
+        initial_data_uint8 = np.concatenate((forwards, lefts, rights, brakes))
+        print('Saving {} frames'.format(len(initial_data_uint8)))
+        np.save(INITIAL_DATA_FILE_NAME, initial_data_uint8)
         cv2.destroyAllWindows()
         release_keys()
         break
@@ -62,19 +67,19 @@ while True:
         cv2.destroyAllWindows()
         release_keys()
         break
-    elif initial_data_index == 40000:
+    elif initial_data_index == FRAMES_PER_OUTPUT * OUTPUT_LENGTH:
+        release_keys()
         paused = True
-        choice = input('40k frames collected. Save? (y/n)\n')
+        choice = input('{} frames collected. Save? (y/n)\n'.format(FRAMES_PER_OUTPUT * OUTPUT_LENGTH))
         if choice == 'y':
             print('Saving {} frames to {}'.format(initial_data_index, INITIAL_DATA_FILE_NAME))
+            initial_data_uint8 = np.concatenate((forwards, lefts, rights, brakes))
             np.save(INITIAL_DATA_FILE_NAME, initial_data_uint8)
             cv2.destroyAllWindows()
-            release_keys()
             break
         elif choice == 'n':
             print('Not saving')
             cv2.destroyAllWindows()
-            release_keys()
             break
         else:
             print('huh?')
@@ -103,37 +108,41 @@ while True:
 
         datum = np.concatenate((frame, output_row))
         # If we have 1000 of any output then stop saving it to it's buffer
-        if output[0] and not f_buffer_index == 1000:
+        if (output[0] and f_buffer_index < min([l_buffer_index, r_buffer_index, b_buffer_index])
+                and not f_buffer_index == FRAMES_PER_OUTPUT):
             forwards[f_buffer_index] = datum
             f_buffer_index += 1
-        elif output[1] and not l_buffer_index == 1000:
+        elif output[1] and not l_buffer_index == FRAMES_PER_OUTPUT:
             lefts[l_buffer_index] = datum
             l_buffer_index += 1
-        elif output[2] and not r_buffer_index == 1000:
+        elif output[2] and not r_buffer_index == FRAMES_PER_OUTPUT:
             rights[r_buffer_index] = datum
             r_buffer_index += 1
-        elif output[3] and not b_buffer_index == 1000:
+        elif output[3] and not b_buffer_index == FRAMES_PER_OUTPUT:
             brakes[b_buffer_index] = datum
             b_buffer_index += 1
 
-        count_list = [f_count, l_count, r_count, b_count]
-        current_count = count_list[np.argmax(output)]  # argmax works for bools
-        max_count = max(count_list)
+        initial_data_index = f_buffer_index + l_buffer_index + r_buffer_index + b_buffer_index
 
         # Once we have 1000 of each output save them all to initial_data_uint8
-        if f_buffer_index == 1000 and l_buffer_index == 1000 and r_buffer_index == 1000 and b_buffer_index == 1000:
+        # if (f_buffer_index == FRAMES_PER_OUTPUT and l_buffer_index == FRAMES_PER_OUTPUT
+        #         and r_buffer_index == FRAMES_PER_OUTPUT and b_buffer_index == FRAMES_PER_OUTPUT):
+        #     data = np.concatenate((forwards, lefts, rights, brakes))
+        #
+        #     initial_data_uint8[initial_data_index:(initial_data_index + 4000)] = data
+        #     initial_data_index += 4000
+        #
+        #     f_buffer_index = 0
+        #     l_buffer_index = 0
+        #     r_buffer_index = 0
+        #     b_buffer_index = 0
+        #
+        #
+        #
+        #     print('Data at {} frames'.format(initial_data_index))
 
-            data = np.concatenate((forwards, lefts, rights, brakes))
-
-            initial_data_uint8[initial_data_index:(initial_data_index + 4000)] = data
-            initial_data_index += 4000
-
-            f_buffer_index = 0
-            l_buffer_index = 0
-            r_buffer_index = 0
-            b_buffer_index = 0
-
-            print('Data at {} frames'.format(initial_data_index))
+        if initial_data_index % 1000 == 0:
+            print(f_buffer_index, l_buffer_index, r_buffer_index, b_buffer_index)
 
         release_keys()
         if output[0]:
@@ -157,5 +166,5 @@ while True:
             cv2.destroyAllWindows()
             break
 
-        duration = time() - start_time
-        sleep(max(0, round(1/18 - duration)))
+        # duration = time() - start_time
+        # sleep(max(0., round(1/18 - duration)))

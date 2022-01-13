@@ -98,5 +98,5 @@ while True:
         elif output[3]:
             PressKey(S)
 
-        duration = time() - last_loop_time
-        sleep(max(0, round(1/18 - duration)))
+        # duration = time() - last_loop_time
+        # sleep(max(0., 1/18 - duration))

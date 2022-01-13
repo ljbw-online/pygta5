@@ -5,7 +5,7 @@ from tensorflow.keras.models import load_model
 
 from common import (INPUT_WIDTH, INPUT_HEIGHT, MODEL_NAME, get_gta_window, PAUSE_KEY, QUIT_WITHOUT_SAVING_KEY, PressKey,
                     W, A, S, D, key_check, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys, OUTPUT_LENGTH,
-                    QUIT_AND_SAVE_KEY, CORRECTION_FILE_NAME)
+                    SAVE_AND_QUIT_KEY, CORRECTION_FILE_NAME)
 
 model = load_model(MODEL_NAME)
 last_loop_time = 0
@@ -38,7 +38,7 @@ while True:
     elif set(CORRECTING_KEYS) & set(keys):
         if not correcting and not paused:
             correcting = True
-    elif QUIT_AND_SAVE_KEY in keys:
+    elif SAVE_AND_QUIT_KEY in keys:
         print('Saving {} frames'.format(cd_buffer_count))
         correction_data = correction_data[:cd_buffer_count]
         np.save(CORRECTION_FILE_NAME, correction_data)
@@ -51,7 +51,7 @@ while True:
         break
     elif cd_buffer_count == 39999:
         print('40k frames recorded')
-        print('Press {} to save and quit'.format(QUIT_AND_SAVE_KEY))
+        print('Press {} to save and quit'.format(SAVE_AND_QUIT_KEY))
         release_keys()
     else:
         if correcting:

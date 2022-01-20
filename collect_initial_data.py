@@ -10,7 +10,7 @@ from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window,
                     W, A, S, D, SAVE_AND_CONTINUE_KEY)
 
 np.set_printoptions(precision=3)
-FRAMES_PER_OUTPUT = 1000
+FRAMES_PER_OUTPUT = 5000
 
 start_time = 0
 last_correcting_time = 0
@@ -90,7 +90,7 @@ while True:
         frame = get_gta_window()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT))
-        # frame.shape == (RESIZE_HEIGHT + OUTPUT_LENGTH, RESIZE_WIDTH)
+        # frame.shape == (RESIZE_HEIGHT, RESIZE_WIDTH)
 
         output[:] = False
         if CORRECTING_KEYS[2] in keys:
@@ -123,23 +123,6 @@ while True:
             b_buffer_index += 1
 
         initial_data_index = f_buffer_index + l_buffer_index + r_buffer_index + b_buffer_index
-
-        # Once we have 1000 of each output save them all to initial_data_uint8
-        # if (f_buffer_index == FRAMES_PER_OUTPUT and l_buffer_index == FRAMES_PER_OUTPUT
-        #         and r_buffer_index == FRAMES_PER_OUTPUT and b_buffer_index == FRAMES_PER_OUTPUT):
-        #     data = np.concatenate((forwards, lefts, rights, brakes))
-        #
-        #     initial_data_uint8[initial_data_index:(initial_data_index + 4000)] = data
-        #     initial_data_index += 4000
-        #
-        #     f_buffer_index = 0
-        #     l_buffer_index = 0
-        #     r_buffer_index = 0
-        #     b_buffer_index = 0
-        #
-        #
-        #
-        #     print('Data at {} frames'.format(initial_data_index))
 
         if initial_data_index % 1000 == 0:
             print(f_buffer_index, l_buffer_index, r_buffer_index, b_buffer_index)

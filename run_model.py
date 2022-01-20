@@ -1,11 +1,10 @@
 import numpy as np
 import cv2
 from time import time, sleep
+from tensorflow.keras.models import load_model
 
 from common import (INPUT_WIDTH, INPUT_HEIGHT, MODEL_NAME, get_gta_window, PAUSE_KEY, QUIT_WITHOUT_SAVING_KEY, PressKey,
-     W, A, S, D, key_check, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys)
-# from train_model_keras import model
-from tensorflow.keras.models import load_model
+                    W, A, S, D, key_check, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys)
 
 model = load_model(MODEL_NAME)
 last_loop_time = 0
@@ -54,9 +53,9 @@ while True:
 
         display_frame = cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT), interpolation=cv2.INTER_NEAREST)
         if (time() - last_correcting_time) < 1:
-            text_top_left = (round(DISPLAY_WIDTH*0.1),round(DISPLAY_HEIGHT*0.9))
+            text_top_left = (round(DISPLAY_WIDTH*0.1), round(DISPLAY_HEIGHT*0.9))
             font = cv2.FONT_HERSHEY_SIMPLEX
-            cv2.putText(display_frame,'Under human control',text_top_left,font,2,(255,255,255),3)
+            cv2.putText(display_frame, 'Under human control', text_top_left, font, 2, (255, 255, 255), 3)
 
         cv2.imshow('ALANN', display_frame)
         if cv2.waitKey(25) & 0xFF == ord('q'):

@@ -1,6 +1,6 @@
 import numpy as np
 
-from common import OUTPUT_LENGTH, oh4_w, oh4_wa, oh4_wd, oh4_s
+from common import OUTPUT_SHAPE, oh4_w, oh4_wa, oh4_wd, oh4_s
 
 ae = np.array_equal
 
@@ -18,7 +18,7 @@ b_count = 0
 bd_count = 0
 
 for datum in correction_data:
-    output = datum[-1, :OUTPUT_LENGTH]
+    output = datum[-1, :OUTPUT_SHAPE]
     if ae(output, oh4_w):
         f[f_count] = datum
         f_count += 1

@@ -48,8 +48,8 @@ def alexnet(input_width, input_height, lr, output_length):
     )
     return model
 
-from common import INPUT_WIDTH, INPUT_HEIGHT, LR, OUTPUT_LENGTH
-model = alexnet(INPUT_WIDTH, INPUT_HEIGHT, LR, OUTPUT_LENGTH)
+from common import INPUT_WIDTH, INPUT_HEIGHT, LR, OUTPUT_SHAPE
+model = alexnet(INPUT_WIDTH, INPUT_HEIGHT, LR, OUTPUT_SHAPE)
 
 # tflearn model training
 import os

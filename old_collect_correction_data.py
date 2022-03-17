@@ -4,7 +4,7 @@ from time import time, sleep
 from tensorflow.keras.models import load_model
 
 from common import (INPUT_WIDTH, INPUT_HEIGHT, MODEL_NAME, get_gta_window, PAUSE_KEY, QUIT_WITHOUT_SAVING_KEY, PressKey,
-                    W, A, S, D, key_check, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys, OUTPUT_LENGTH,
+                    W, A, S, D, get_keys, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys, OUTPUT_SHAPE,
                     SAVE_AND_QUIT_KEY, CORRECTION_DATA_FILE_NAME)
 
 model = load_model(MODEL_NAME)
@@ -21,10 +21,10 @@ fl_count = 0
 fr_count = 0
 b_count = 0
 
-key_check()  # flush keys
+get_keys()  # flush keys
 print('Press {} to unpause'.format(PAUSE_KEY))
 while True:
-    keys = key_check()
+    keys = get_keys()
 
     if PAUSE_KEY in keys:
         if paused:
@@ -80,7 +80,7 @@ while True:
             elif CORRECTING_KEYS[0] in keys:  # Only press forward if I am not pressing left or right
                 output[0] = True
 
-            output_row[0, :OUTPUT_LENGTH] = output.astype('float32')
+            output_row[0, :OUTPUT_SHAPE] = output.astype('float32')
             if output[0] and (f_count < fl_count):
                 correction_data[cd_buffer_count] = np.concatenate((frame, output_row))
                 cd_buffer_count += 1

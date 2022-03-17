@@ -52,10 +52,10 @@ test_images = test_data[:, :-1] / 255.0
 test_labels = test_data[:, -1, :OUTPUT_LENGTH]
 
 print('train imgs {}, train labels {}'.format(training_images.shape,
-                                                                      training_labels.shape,))
+                                              training_labels.shape,))
 
 print('test imgs {}, test labels {}'.format(test_images.shape,
-                                                                   test_labels.shape))
+                                            test_labels.shape))
 
 choice = input('Check data? (y/n)\n')
 if choice == 'y':

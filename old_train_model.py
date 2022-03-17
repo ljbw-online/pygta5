@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow.keras as ks
 
-from common import CORRECTION_DATA_FILE_NAME, MODEL_NAME, OUTPUT_LENGTH, oh4_w, oh4_wa, oh4_wd, oh4_s
+from common import CORRECTION_DATA_FILE_NAME, MODEL_NAME, OUTPUT_SHAPE, oh4_w, oh4_wa, oh4_wd, oh4_s
 
 correction_data = np.load(CORRECTION_DATA_FILE_NAME)
 model = ks.models.load_model(MODEL_NAME)
@@ -14,7 +14,7 @@ left_count = 0
 right_count = 0
 brake_count = 0
 for i in range(len(correction_data)):
-    output = correction_data[i, -1, :OUTPUT_LENGTH]
+    output = correction_data[i, -1, :OUTPUT_SHAPE]
     if ae(output, oh4_w):
         forward_count += 1
     elif ae(output, oh4_wa):
@@ -33,14 +33,14 @@ test_split_index = round(len(correction_data) * 0.25)
 train_imgs = correction_data[test_split_index:, :-1]
 train_imgs = np.expand_dims(train_imgs, axis=3)  # So that Conv2D will accept it
 print('train_imgs.shape', train_imgs.shape)
-train_labels = correction_data[test_split_index:, -1, :OUTPUT_LENGTH]
+train_labels = correction_data[test_split_index:, -1, :OUTPUT_SHAPE]
 print('train_labels.shape', train_labels.shape)
 print('train_labels[:10]')
 print(train_labels[:10])
 
 test_imgs = correction_data[:test_split_index, :-1]
 test_imgs = np.expand_dims(test_imgs, axis=3)
-test_labels = correction_data[:test_split_index, -1, :OUTPUT_LENGTH]
+test_labels = correction_data[:test_split_index, -1, :OUTPUT_SHAPE]
 print('test_imgs.shape', test_imgs.shape)
 print('test_labels[:10]')
 print(test_labels[:10])

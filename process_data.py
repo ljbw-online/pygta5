@@ -1,5 +1,5 @@
 import numpy as np
-from common import INPUT_WIDTH,INPUT_HEIGHT,OUTPUT_LENGTH,RESIZE_WIDTH,RESIZE_HEIGHT
+from common import INPUT_WIDTH,INPUT_HEIGHT,OUTPUT_SHAPE,RESIZE_WIDTH,RESIZE_HEIGHT
 
 training_data = np.load('training_data.npy')
 new_training_data = np.empty((len(training_data),INPUT_HEIGHT,INPUT_WIDTH))

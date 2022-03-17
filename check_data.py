@@ -1,29 +1,35 @@
 import numpy as np
 import cv2
 from time import time, sleep
+import os
 
-from common import INITIAL_DATA_FILE_NAME, DISPLAY_WIDTH, DISPLAY_HEIGHT, OUTPUT_LENGTH
+from common import INITIAL_DATA_FILE_NAME, DISPLAY_WIDTH, DISPLAY_HEIGHT, CORRECTION_DATA_FILE_NAME
 
-initial_data = np.load(INITIAL_DATA_FILE_NAME)
+from multihot_3 import output_row_to_wasd_string
 
-for frame in initial_data:
+data = None  # Stops "'data' can be undefined"
+if os.path.isfile(CORRECTION_DATA_FILE_NAME):
+    choice = input('Check correction data? (y/n)\n')
+    if choice == 'y':
+        print('Loading correction data')
+        data = np.load(CORRECTION_DATA_FILE_NAME)
+    else:
+        print('Loading initial data')
+        data = np.load(INITIAL_DATA_FILE_NAME)
+        print(data.shape)
+        exit()
+
+for datum in data:
     start_time = time()
-    cv2.imshow('initial data', cv2.resize(frame[:-1], (DISPLAY_WIDTH, DISPLAY_HEIGHT), interpolation=cv2.INTER_NEAREST))
+    frame = datum[:-1]
+    output_row = datum[-1]
+    cv2.imshow('data', cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT), interpolation=cv2.INTER_NEAREST))
     if cv2.waitKey(25) & 0xFF == ord('q'):
         cv2.destroyAllWindows()
         break
 
-    outputs = list(frame[-1].reshape((-1, 4)))
-    for i in range(len(outputs)):
-        a = np.argmax(outputs[i])
-        if a == 0:
-            outputs[i] = 'w'
-        elif a == 1:
-            outputs[i] = 'wa'
-        elif a == 2:
-            outputs[i] = 'wd'
-        elif a == 3:
-            outputs[i] = 's'
+    print(output_row_to_wasd_string(output_row))
 
-    print(outputs)
-    sleep(max(0., 1/5 - (time() - start_time)))
+    # sleep(max(0., 1/5 - (time() - start_time)))
+
+cv2.destroyAllWindows()

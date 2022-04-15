@@ -1,19 +1,19 @@
-import numpy as np
 import cv2
 from time import time, sleep
-from tensorflow.keras.models import load_model, Model
+# from tensorflow.keras.models import load_model, Model
 
 from common import (PAUSE_KEY, release_keys, QUIT_WITHOUT_SAVING_KEY, get_keys, CORRECTING_KEYS, INPUT_HEIGHT,
-                    INPUT_WIDTH)
+                    INPUT_WIDTH, ReleaseKey, S, PressKey, W)
 
-from multihot_3 import get_frame, correction_to_keypresses, prediction_to_key_presses, display_features, predictions
+from multihot_3 import get_frame, correction_to_keypresses, MODEL_NAME, ModelRunner
 
-# np.set_printoptions(precision=3)
-start_time = 0
+# start_time = 0
 
-model = load_model('multihot_3')
-model = Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
-prediction = []
+# model = load_model(MODEL_NAME)
+# model = Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
+# prediction = []
+
+model_runner = ModelRunner()
 
 correcting = False
 paused = True
@@ -46,18 +46,7 @@ while True:
             correcting = False
 
     if not paused:
-        start_time = time()
-
-        frame = get_frame()
-        frame = frame.reshape(1, INPUT_HEIGHT, INPUT_WIDTH, 3)  # frame = np.expand_dims(frame, 0) ?
-
         if correcting:
             correction_to_keypresses(keys)
-        else:
-            prediction = model(frame)  # model returns a list of tensors which are the outputs of each layer
-            predictions = prediction_to_key_presses(prediction[-1][0], predictions)
 
-        display_features(prediction, correcting=correcting)
-
-        # duration = time() - start_time
-        # sleep(max(0., round(1/18 - duration)))
+        model_runner.run_model(keys, correcting)

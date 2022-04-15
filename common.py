@@ -6,6 +6,8 @@ import platform
 # import importlib
 # importlib.reload(common)
 
+# np.set_printoptions(precision=3)
+
 if platform.system() == 'Windows':
     import win32gui
     import win32ui
@@ -116,6 +118,10 @@ if platform.system() == 'Windows':
 
 
     def release_keys():
+        # for letter, scancode in zip(KEYS, [W, A, S, D]):
+        #     if letter in keys:
+        #         ReleaseKey(scancode)
+        #
         ReleaseKey(W)
         ReleaseKey(A)
         ReleaseKey(S)
@@ -149,6 +155,7 @@ PAUSE_KEY = 'Z'
 SAVE_AND_QUIT_KEY = 'X'
 SAVE_AND_CONTINUE_KEY = 'B'
 QUIT_WITHOUT_SAVING_KEY = '5'
+KEYS = ['W', 'A', 'S', 'D']
 CORRECTING_KEYS = ['I', 'J', 'K', 'L']
 FORWARD = CORRECTING_KEYS[0]
 LEFT = CORRECTING_KEYS[1]

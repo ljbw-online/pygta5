@@ -1,36 +1,22 @@
-import numpy as np
 import cv2
-from time import time, sleep
-from tensorflow.keras.models import load_model, Model
+from time import sleep  # , time
 
 from common import (PAUSE_KEY, SAVE_AND_QUIT_KEY,
                     release_keys, QUIT_WITHOUT_SAVING_KEY,
-                    get_keys, SAVE_AND_CONTINUE_KEY, INPUT_WIDTH, INPUT_HEIGHT, CORRECTING_KEYS,
-                    CORRECTION_DATA_FILE_NAME)
+                    get_keys, SAVE_AND_CONTINUE_KEY, CORRECTING_KEYS)
 
-from multihot_3 import (
-    create_datum, NUM_SIGNALS, DATUM_SHAPE,
-    output_counts, save_datum_decision, get_frame, correction_keys_to_output,
-    stop_session_decision, correction_to_keypresses, display_features, prediction_to_key_presses)
+from multihot_3 import (NUM_SIGNALS, correction_to_keypresses, DataCollector, ModelRunner, InputCollector)
 
 # np.set_printoptions(precision=3)
-start_time = 0
+# start_time = 0
 
-# Things can't be imported from collect_initial_data because they'd use the MAX_DATA_PER_OUTPUT value from that file
-# which is probably larger than what I want for this file. Also, to import anything from that module or
-# run_model I would have to put their while-loops inside "if __name__ == '__main__'".
-model = load_model('multihot_3')
-model = Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
-prediction = []
-
-MAX_DATA_PER_OUTPUT = 2500
+MAX_DATA_PER_OUTPUT = 1750
 DATA_TARGET = MAX_DATA_PER_OUTPUT * NUM_SIGNALS
 
-DATA_SHAPE = (DATA_TARGET,) + DATUM_SHAPE
-correction_data = np.zeros(DATA_SHAPE, dtype='uint8')
-print('correction_data.shape', correction_data.shape)
+data_collector = DataCollector(DATA_TARGET)
+model_runner = ModelRunner()
 
-correction_data_index = 0
+data_collector.correction_data = True
 
 paused = True
 correcting = False
@@ -49,18 +35,14 @@ while True:
             paused = True
             release_keys()
             print('Paused')
-            print('correction_data_index', correction_data_index)
-            print('output_counts', output_counts)
+            print('self.index', data_collector.index)
+            print('Signals:', data_collector.signal_counts.list())
             sleep(1)
     elif SAVE_AND_CONTINUE_KEY in keys:
-        print('Saving {} frames'.format(correction_data_index + 1))
-        correction_data_to_save = correction_data[:correction_data_index]
-        np.save(CORRECTION_DATA_FILE_NAME, correction_data_to_save)
+        print('NOT IMPLEMENTED')
         sleep(1)
     elif SAVE_AND_QUIT_KEY in keys:
-        print('Saving {} frames'.format(correction_data_index + 1))
-        correction_data = correction_data[:correction_data_index]
-        np.save(CORRECTION_DATA_FILE_NAME, correction_data)
+        data_collector.save()
         cv2.destroyAllWindows()
         release_keys()
         break
@@ -69,16 +51,14 @@ while True:
         cv2.destroyAllWindows()
         release_keys()
         break
-    elif stop_session_decision(correction_data_index, DATA_TARGET):
+    elif data_collector.stop_session_decision():
         release_keys()
         paused = True
-        print('{} frames collected.'.format(correction_data_index + 1))
-        print('output_counts ==', output_counts)
+        print('{} frames collected.'.format(data_collector.index))
+        print('Signals:', data_collector.signal_counts.list())
         choice = input('Save? (y/n)\n')
         if choice == 'y':
-            print('Saving {} frames to {}'.format(correction_data_index + 1, CORRECTION_DATA_FILE_NAME))
-            correction_data = correction_data[:correction_data_index]
-            np.save(CORRECTION_DATA_FILE_NAME, correction_data)
+            data_collector.save()
             cv2.destroyAllWindows()
             break
         elif choice == 'n':
@@ -95,30 +75,10 @@ while True:
         correcting = False
 
     if not paused:
-        start_time = time()
-
-        frame = get_frame()
-
         if correcting:
             correction_to_keypresses(keys)
+            data_collector.collect_datum(keys)
 
-            output = correction_keys_to_output(keys)
-            datum = create_datum(frame, output)
+        model_runner.run_model(keys, correcting)
 
-            save_decision, output_counts, correction_data_index = save_datum_decision(
-                keys, output_counts, correction_data_index, MAX_DATA_PER_OUTPUT)
-
-            if save_decision:
-                correction_data[correction_data_index] = datum
-
-                if (correction_data_index % round(MAX_DATA_PER_OUTPUT / 10) == 0) and (correction_data_index != 0):
-                    print(output_counts)
-        else:
-            frame = frame.reshape(1, INPUT_HEIGHT, INPUT_WIDTH, 3)
-            prediction = model(frame)  # model returns a list of tensors corresponding to each layer
-            prediction_to_key_presses(prediction[-1][0])
-
-        display_features(prediction, correcting=correcting)
-
-        # duration = time() - start_time
-        # sleep(max(0., round(1/18 - duration)))
+        get_keys()  # flush GetAsyncKeyState buffer

@@ -32,6 +32,8 @@ if __name__ == '__main__':
 
     model.compile(loss=ks.losses.MeanSquaredError(), metrics=[metric_name])
 
+    # USE SHUFFLE=TRUE TO SHUFFLE TRAINING DATA
+
     model.fit({'image_input': training_images}, {'model_output': training_labels}, epochs=1, batch_size=BATCH_SIZE)
 
     for prediction, label in zip(model.predict({'image_input': test_images[:15]}), test_labels[:15]):

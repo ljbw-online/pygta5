@@ -3,7 +3,7 @@ import cv2
 from time import time
 
 from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window, LEFT,
-                    BRAKE, RIGHT, release_keys, PressKey, W, S, A, D, ReleaseKey, KEYS)
+                    BRAKE, RIGHT, release_keys, PressKey, W, S, A, D, ReleaseKey, KEYS, K)
 
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
@@ -71,41 +71,43 @@ class InputCollector:
         self.key_score_maxes = [0., 0., 0., 0.]
         self.key_score_mins = [0., 0., 0., 0.]
 
+        self.t = time()
+
     def set_current_label(self, keys):
         self.current_label[0] = LEFT in keys
         self.current_label[1] = BRAKE in keys
         self.current_label[2] = RIGHT in keys
 
     def set_current_key_scores(self, keys):
-        t = time()
+        self.t = time()
 
         for i in range(4):
             # If a key is down but was not down on the previous frame then it has been pressed, in which case update
             # the key_press_time for that key.
             if KEYS[i] in keys and not self.key_states[i]:
                 self.key_states[i] = True
-                self.key_press_times[i] = t
+                self.key_press_times[i] = self.t
                 self.key_score_mins[i] = self.current_key_scores[i]
                 # Release W when we press S
                 if i == 2:
                     self.key_states[0] = False
-                    self.key_release_times[0] = t
+                    self.key_release_times[0] = self.t
             elif KEYS[i] not in keys and self.key_states[i]:
                 self.key_states[i] = False
-                self.key_release_times[i] = t
+                self.key_release_times[i] = self.t
                 # Set the key_score_max when we release the key
                 self.key_score_maxes[i] = self.current_key_scores[i]
                 # Releasing S has to look like a press of W so that the forward score starts again from zero
                 if i == 2:
-                    self.key_press_times[0] = t
+                    self.key_press_times[0] = self.t
                     self.key_score_mins[0] = 0
 
         for i in range(4):
             if self.key_states[i]:
-                self.current_key_scores[i] = self.key_score_mins[i] + (t - self.key_press_times[i])
+                self.current_key_scores[i] = self.key_score_mins[i] + (self.t - self.key_press_times[i])
             else:
-                self.current_key_scores[i] = max(0., self.key_score_maxes[i] - (t - self.key_release_times[i]))
                 # Subtract the time since the key was released from the maximum value that the score reached.
+                self.current_key_scores[i] = max(0., self.key_score_maxes[i] - (self.t - self.key_release_times[i]))
 
     def collect_input(self, keys):
         self.set_current_label(keys)
@@ -370,16 +372,16 @@ def train_new_model(epochs=1, model_desc=''):
     x = ks.layers.Rescaling(scale=1. / 255)(image_input)
     x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
-    x = ks.layers.Conv2D(8, 4, padding='same', activation='relu', data_format='channels_last', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
     x = ks.layers.Flatten()(x)
-    x = ks.layers.Dense(16, activation='tanh', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    x = ks.layers.Dense(16, activation='relu', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
 
     scores_input = ks.Input(shape=(4,), name='scores_input')
-    y = ks.layers.Dense(16, activation='tanh', kernel_regularizer=ks.regularizers.l2(0.0001))(scores_input)
+    y = ks.layers.Dense(16, activation='relu', kernel_regularizer=ks.regularizers.l2(0.0001))(scores_input)
 
     z = ks.layers.concatenate([x, y])
-    z = ks.layers.Dropout(0.4)(z)
+    # z = ks.layers.Dropout(0.4)(z)
     model_output = ks.layers.Dense(OUTPUT_LENGTH, activation='sigmoid', name='model_output', kernel_regularizer=ks.regularizers.l2(0.0001))(z)
 
     model = ks.Model(inputs=[image_input, scores_input], outputs=model_output)
@@ -511,6 +513,8 @@ class ModelRunner(InputCollector):
         model = load_model(MODEL_NAME)
         model = Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
         self.model = model
+        self.stuck = False
+        self.stuck_time = 0
 
     def display_features(self, model_layers, correcting):
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -526,20 +530,20 @@ class ModelRunner(InputCollector):
         conv2_f2 = conv2[:, :, 1]
         conv2_f3 = conv2[:, :, 2]
         conv2_f4 = conv2[:, :, 3]
-        conv2_f5 = conv2[:, :, 4]
-        conv2_f6 = conv2[:, :, 5]
-        conv2_f7 = conv2[:, :, 6]
-        conv2_f8 = conv2[:, :, 7]
+        # conv2_f5 = conv2[:, :, 4]
+        # conv2_f6 = conv2[:, :, 5]
+        # conv2_f7 = conv2[:, :, 6]
+        # conv2_f8 = conv2[:, :, 7]
 
         conv_img1 = np.concatenate((np.concatenate((conv1_f1, conv1_f2), axis=1), np.concatenate((conv1_f3, conv1_f4), axis=1)))
         conv_img2 = np.concatenate((np.concatenate((conv2_f1, conv2_f2), axis=1), np.concatenate((conv2_f3, conv2_f4), axis=1)))
-        conv_img3 = np.concatenate((np.concatenate((conv2_f5, conv2_f6), axis=1), np.concatenate((conv2_f7, conv2_f8), axis=1)))
+        # conv_img3 = np.concatenate((np.concatenate((conv2_f5, conv2_f6), axis=1), np.concatenate((conv2_f7, conv2_f8), axis=1)))
 
         conv_img2 = cv2.resize(conv_img2, (320, 180), interpolation=cv2.INTER_NEAREST)
-        conv_img3 = cv2.resize(conv_img3, (320, 180), interpolation=cv2.INTER_NEAREST)
+        # conv_img3 = cv2.resize(conv_img3, (320, 180), interpolation=cv2.INTER_NEAREST)
 
-        conv_features = np.concatenate((conv_img1, conv_img2, conv_img3))
-        conv_features = cv2.resize(conv_features, (640, 1080), interpolation=cv2.INTER_NEAREST)
+        conv_features = np.concatenate((conv_img1, conv_img2))  # , conv_img3))
+        conv_features = cv2.resize(conv_features, (640, 720), interpolation=cv2.INTER_NEAREST)
 
         if correcting:
             cv2.putText(conv_features, 'Correcting', (128, 240), font, 2, (255,), 3)
@@ -551,7 +555,7 @@ class ModelRunner(InputCollector):
         penult_dense = rescale(model_layers[-2][0].numpy())
         penult_dense = (penult_dense * 255).astype('uint8')
         penult_dense = np.expand_dims(penult_dense, 0)
-        penult_dense = cv2.resize(penult_dense, (640, 20), interpolation=cv2.INTER_NEAREST)
+        penult_dense = cv2.resize(penult_dense, (640, 30), interpolation=cv2.INTER_NEAREST)
 
         scores = (np.array(self.current_key_scores) * 255)
         for i in range(4):
@@ -584,6 +588,29 @@ class ModelRunner(InputCollector):
         global layer_outputs
         self.collect_input(keys)
 
+        for i in range(1, 4):
+            if (self.current_key_scores[i]) > 3.0:
+                print('Resetting key score {}'.format(i))
+                self.current_key_scores[i] = 0
+                self.key_score_mins[i] = 0
+                self.key_press_times[i] = self.t
+                self.key_score_maxes[i] = 0
+
+        if self.current_key_scores[0] > 30.0:
+            # self.current_key_scores[0] = 0
+            # self.key_score_mins[0] = 0
+            # self.key_press_times[0] = self.t
+            # self.key_score_maxes[0] = 0
+            if not self.stuck:
+                print('stuck')
+
+            self.stuck = True
+            self.stuck_time = self.t
+            PressKey(K)
+        elif self.stuck and ((self.t - self.stuck_time) > 2.9):
+            self.stuck = False
+            ReleaseKey(K)
+
         if not correcting:
             layer_outputs = self.model([np.expand_dims(self.current_frame, 0),
                                         np.expand_dims(np.array(self.current_key_scores, dtype='float32'), 0)])
@@ -593,14 +620,14 @@ class ModelRunner(InputCollector):
         self.display_features(layer_outputs, correcting)
 
 
-def create_datum(frame, output):
-    output_row = np.zeros((1, INPUT_WIDTH, 3), dtype='uint8')
-    output_row[0, :OUTPUT_SHAPE[0], 0] = output.astype('uint8')
-
-    datum = np.concatenate((frame, output_row))
-
-    return datum
-
+# def create_datum(frame, output):
+#     output_row = np.zeros((1, INPUT_WIDTH, 3), dtype='uint8')
+#     output_row[0, :OUTPUT_SHAPE[0], 0] = output.astype('uint8')
+#
+#     datum = np.concatenate((frame, output_row))
+#
+#     return datum
+#
 
 # averaging_period = 8
 # predictions = np.zeros((averaging_period,) + OUTPUT_SHAPE)
@@ -632,117 +659,117 @@ def create_datum(frame, output):
 # index_increment always being set to 1 instead of being incremented ensures that a datum on
 # which I am both braking and turning left, for example, does not cause two increments of data_buffer_index (double
 # increments would cause the training data array to have gaps in it).
-def save_datum_decision(keys, output_counts_param, data_buffer_index, max_data_per_output):
-    decision = False
-    index_increment = 0
-
-    if (BRAKE in keys) and (output_counts_param[1] < max_data_per_output):
-        decision = True
-        index_increment = 1
-        output_counts_param[1] += 1
-    elif (LEFT in keys) and (output_counts_param[0] < max_data_per_output):
-        decision = True
-        index_increment = 1
-        output_counts_param[0] += 1
-    elif (RIGHT in keys) and (output_counts_param[2] < max_data_per_output):
-        decision = True
-        index_increment = 1
-        output_counts_param[2] += 1
-    elif ((BRAKE not in keys) and (LEFT not in keys) and (RIGHT not in keys)
-          and (output_counts_param[3] < max_data_per_output)):
-        decision = True
-        index_increment = 1
-        output_counts_param[3] += 1
-
-    data_buffer_index += index_increment
-
-    return decision, output_counts_param, data_buffer_index
-
-
-def stop_session_decision(data_index, data_target, output_counts_param=None):
-    if output_counts_param is None:
-        pass  # Gets rid of the "unused argument" warning
-
-    return data_index == data_target - 1
-
-
-def output_row_to_wasd_string(outrow):
-    output = outrow[:OUTPUT_SHAPE[0], 0].astype('bool')
-
-    s = 'W'
-
-    if output[0]:
-        s += 'A'
-
-    if output[1]:
-        s = ''
-        if output[0]:
-            s = 'A'
-
-        s += 'S'
-        # don't need to append 'D' here; it will be appended in the next if statement
-
-    if output[2]:
-        s += 'D'
-
-    return s
-
-
-def output_count_summary(training_data):
-    lefts = 0
-    brakes = 0
-    rights = 0
-    nokeys = 0
-    for datum in training_data:
-        output = datum[INPUT_HEIGHT, :OUTPUT_SHAPE[0], 0].astype('bool')
-
-        if output[0] and not output[1] and not output[2]:
-            lefts += 1
-        elif output[2] and not output[0] and not output[1]:
-            rights += 1
-        elif output[1]:
-            brakes += 1
-        elif not any(output):
-            nokeys += 1
-        else:
-            print('Bad output: {}'.format(output))
-
-    s = 'lefts: ' + str(lefts) + ', brakes: ' + str(brakes) + ', rights: ' + str(rights) + ', nokeys: ' + str(nokeys)
-
-    return s, [lefts, brakes, rights, nokeys]
-
-
-def split_into_images_and_labels(training_data):
-    np.random.shuffle(training_data)
-
-    images_uint8 = training_data[:, :-1]
-    print('images_uint8.shape', images_uint8.shape)
-
-    outputs = training_data[:, -1, :OUTPUT_SHAPE[0], 0]
-    labels_float32 = outputs.astype('float32')
-    print('labels_float32.shape', labels_float32.shape)
-
-    return images_uint8, labels_float32
-
-
-def get_model_definition():
-    import tensorflow.keras as ks
-
-    # Rescaling layer rescales and outputs floats
-    image_input = ks.Input(shape=(INPUT_HEIGHT, INPUT_WIDTH, 3), name='image_input')
-    x = ks.layers.Rescaling(scale=1. / 255)(image_input)
-    x = ks.layers.Conv2D(3, 4, padding='same', activation='relu', data_format='channels_last')(x)
-    x = ks.layers.MaxPooling2D((3, 3), data_format='channels_last')(x)
-    # x = ks.layers.Conv2D(6, 4, padding='same', activation='relu', data_format='channels_last')(x)
-    # x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
-    x = ks.layers.Flatten()(x)
-    x = ks.layers.Dense(16, activation='relu')(x)
-    model_output = ks.layers.Dense(OUTPUT_LENGTH, activation='sigmoid', name='model_output')(x)
-
-    model = ks.Model(inputs=image_input, outputs=model_output)
-
-    return model
-
+# def save_datum_decision(keys, output_counts_param, data_buffer_index, max_data_per_output):
+#     decision = False
+#     index_increment = 0
+#
+#     if (BRAKE in keys) and (output_counts_param[1] < max_data_per_output):
+#         decision = True
+#         index_increment = 1
+#         output_counts_param[1] += 1
+#     elif (LEFT in keys) and (output_counts_param[0] < max_data_per_output):
+#         decision = True
+#         index_increment = 1
+#         output_counts_param[0] += 1
+#     elif (RIGHT in keys) and (output_counts_param[2] < max_data_per_output):
+#         decision = True
+#         index_increment = 1
+#         output_counts_param[2] += 1
+#     elif ((BRAKE not in keys) and (LEFT not in keys) and (RIGHT not in keys)
+#           and (output_counts_param[3] < max_data_per_output)):
+#         decision = True
+#         index_increment = 1
+#         output_counts_param[3] += 1
+#
+#     data_buffer_index += index_increment
+#
+#     return decision, output_counts_param, data_buffer_index
+#
+#
+# def stop_session_decision(data_index, data_target, output_counts_param=None):
+#     if output_counts_param is None:
+#         pass  # Gets rid of the "unused argument" warning
+#
+#     return data_index == data_target - 1
+#
+#
+# def output_row_to_wasd_string(outrow):
+#     output = outrow[:OUTPUT_SHAPE[0], 0].astype('bool')
+#
+#     s = 'W'
+#
+#     if output[0]:
+#         s += 'A'
+#
+#     if output[1]:
+#         s = ''
+#         if output[0]:
+#             s = 'A'
+#
+#         s += 'S'
+#         # don't need to append 'D' here; it will be appended in the next if statement
+#
+#     if output[2]:
+#         s += 'D'
+#
+#     return s
+#
+#
+# def output_count_summary(training_data):
+#     lefts = 0
+#     brakes = 0
+#     rights = 0
+#     nokeys = 0
+#     for datum in training_data:
+#         output = datum[INPUT_HEIGHT, :OUTPUT_SHAPE[0], 0].astype('bool')
+#
+#         if output[0] and not output[1] and not output[2]:
+#             lefts += 1
+#         elif output[2] and not output[0] and not output[1]:
+#             rights += 1
+#         elif output[1]:
+#             brakes += 1
+#         elif not any(output):
+#             nokeys += 1
+#         else:
+#             print('Bad output: {}'.format(output))
+#
+#     s = 'lefts: ' + str(lefts) + ', brakes: ' + str(brakes) + ', rights: ' + str(rights) + ', nokeys: ' + str(nokeys)
+#
+#     return s, [lefts, brakes, rights, nokeys]
+#
+#
+# def split_into_images_and_labels(training_data):
+#     np.random.shuffle(training_data)
+#
+#     images_uint8 = training_data[:, :-1]
+#     print('images_uint8.shape', images_uint8.shape)
+#
+#     outputs = training_data[:, -1, :OUTPUT_SHAPE[0], 0]
+#     labels_float32 = outputs.astype('float32')
+#     print('labels_float32.shape', labels_float32.shape)
+#
+#     return images_uint8, labels_float32
+#
+#
+# def get_model_definition():
+#     import tensorflow.keras as ks
+#
+#     # Rescaling layer rescales and outputs floats
+#     image_input = ks.Input(shape=(INPUT_HEIGHT, INPUT_WIDTH, 3), name='image_input')
+#     x = ks.layers.Rescaling(scale=1. / 255)(image_input)
+#     x = ks.layers.Conv2D(3, 4, padding='same', activation='relu', data_format='channels_last')(x)
+#     x = ks.layers.MaxPooling2D((3, 3), data_format='channels_last')(x)
+#     # x = ks.layers.Conv2D(6, 4, padding='same', activation='relu', data_format='channels_last')(x)
+#     # x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
+#     x = ks.layers.Flatten()(x)
+#     x = ks.layers.Dense(16, activation='relu')(x)
+#     model_output = ks.layers.Dense(OUTPUT_LENGTH, activation='sigmoid', name='model_output')(x)
+#
+#     model = ks.Model(inputs=image_input, outputs=model_output)
+#
+#     return model
+#
 
 # def display_features(layer_outputs, window_name='FEATURES', correcting=False):
 #     conv = rescale(layer_outputs[2][0].numpy())

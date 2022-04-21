@@ -370,19 +370,19 @@ def train_new_model(epochs=1, model_desc=''):
     # Rescaling layer rescales and outputs floats
     image_input = ks.Input(shape=(INPUT_HEIGHT, INPUT_WIDTH, 3), name='image_input')
     x = ks.layers.Rescaling(scale=1. / 255)(image_input)
-    x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last')(x)  # , kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
-    x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
     x = ks.layers.Flatten()(x)
-    x = ks.layers.Dense(16, activation='relu', kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    x = ks.layers.Dense(16, activation='relu')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
 
     scores_input = ks.Input(shape=(4,), name='scores_input')
-    y = ks.layers.Dense(16, activation='relu', kernel_regularizer=ks.regularizers.l2(0.0001))(scores_input)
+    y = ks.layers.Dense(16, activation='relu')(scores_input)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(scores_input)
 
     z = ks.layers.concatenate([x, y])
     # z = ks.layers.Dropout(0.4)(z)
-    model_output = ks.layers.Dense(OUTPUT_LENGTH, activation='sigmoid', name='model_output', kernel_regularizer=ks.regularizers.l2(0.0001))(z)
+    model_output = ks.layers.Dense(OUTPUT_LENGTH, activation='sigmoid', name='model_output')(z)  # , kernel_regularizer=ks.regularizers.l2(0.0001))(z)
 
     model = ks.Model(inputs=[image_input, scores_input], outputs=model_output)
 

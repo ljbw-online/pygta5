@@ -5,18 +5,19 @@ from common import (PAUSE_KEY, SAVE_AND_QUIT_KEY,
                     release_keys, QUIT_WITHOUT_SAVING_KEY,
                     get_keys, SAVE_AND_CONTINUE_KEY, CORRECTING_KEYS)
 
-from multihot_3 import (NUM_SIGNALS, correction_to_keypresses, DataCollector, ModelRunner, InputCollector)
+from multihot_3 import (correction_to_keypresses, DataCollector, ModelRunner, NUM_SIGNALS)
 
 # np.set_printoptions(precision=3)
 # start_time = 0
 
-MAX_DATA_PER_OUTPUT = 1750
+MAX_DATA_PER_OUTPUT = 2000
 DATA_TARGET = MAX_DATA_PER_OUTPUT * NUM_SIGNALS
 
 data_collector = DataCollector(DATA_TARGET)
 model_runner = ModelRunner()
 
 data_collector.correction_data = True
+model_runner.correction_data = True
 
 paused = True
 correcting = False
@@ -35,8 +36,8 @@ while True:
             paused = True
             release_keys()
             print('Paused')
-            print('self.index', data_collector.index)
-            print('Signals:', data_collector.signal_counts.list())
+            # print('self.index', data_collector.index)
+            # print('Signals:', data_collector.signal_counts.list())
             sleep(1)
     elif SAVE_AND_CONTINUE_KEY in keys:
         print('NOT IMPLEMENTED')
@@ -54,8 +55,8 @@ while True:
     elif data_collector.stop_session_decision():
         release_keys()
         paused = True
-        print('{} frames collected.'.format(data_collector.index))
-        print('Signals:', data_collector.signal_counts.list())
+        # print('{} frames collected.'.format(data_collector.index))
+        # print('Signals:', data_collector.signal_counts.list())
         choice = input('Save? (y/n)\n')
         if choice == 'y':
             data_collector.save()
@@ -75,6 +76,7 @@ while True:
         correcting = False
 
     if not paused:
+
         if correcting:
             correction_to_keypresses(keys)
             data_collector.collect_datum(keys)

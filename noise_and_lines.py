@@ -1,79 +1,176 @@
 import numpy as np
 import cv2
 from time import time, sleep
-import tensorflow as tf
+from itertools import repeat
 
 rng = np.random.default_rng().integers
 
-def imshow(ims, width, height, frame_rate):
-    for im in ims:
+
+def imshow(ims, width, height=None, frame_rate=0, labels=None, title='noise and lines'):
+    if height is None:
+        height = width
+
+    if labels is None:
+        labels = repeat(None, len(ims))
+
+    for im, label in zip(ims, labels):
         st = time()
-        cv2.imshow('noise and lines',cv2.resize(im,(width,height),interpolation=cv2.INTER_NEAREST))
-        if cv2.waitKey(25) == ord('q'):
-            cv2.destroyAllWindows()
-            break
-        sleep(max(0, 1/frame_rate - (time() - st)))
+
+        if label is not None:
+            print(label)
+
+        cv2.imshow(title, cv2.resize(im, (width, height), interpolation=cv2.INTER_NEAREST))
+        if frame_rate == 0:
+            if cv2.waitKey(0) == ord('q'):
+                cv2.destroyAllWindows()
+                break
+        else:
+            if cv2.waitKey(25) == ord('q'):
+                cv2.destroyAllWindows()
+                break
+            sleep(max(0, round(1/frame_rate - (time() - st))))
+
     cv2.destroyAllWindows()
 
-def make_data():
-    length = 200000
-    imgs = rng(0,256,length*32*32,dtype='uint8').reshape((length,32,32))
-    # imgs = np.zeros((length,32,32), dtype='uint8')
 
-    for i in range(0,length,2):
-        imgs[i] = cv2.line(imgs[i], (rng(0,32),0), (rng(0,32),31), 255)
+def make_data(img_size, non_lines_prop=1):
+    lines_num = img_size ** 2 * 2
+    non_lines_num = lines_num * non_lines_prop
 
-    labels = np.zeros(length,dtype='float32')
-    labels[::2] = 1
+    noise_amplitude = 256  # 256 for max amplitude
 
-    return imgs, labels
+    non_lines_imgs = rng(
+        0, noise_amplitude, non_lines_num * img_size * img_size, dtype='uint8').reshape((lines_num, img_size, img_size))
+
+    lines_imgs = rng(
+        0, noise_amplitude, lines_num * img_size * img_size, dtype='uint8').reshape((lines_num, img_size, img_size))
+
+    # Top to bottom
+    for i in range(0, img_size):
+        for j in range(0, img_size):
+            lines_imgs[i * img_size + j] = cv2.line(lines_imgs[i * img_size + j], (i, 0), (j, img_size - 1), 255)
+
+    # Left to right
+    for i in range(0, img_size):
+        for j in range(0, img_size):
+            lines_imgs[(img_size ** 2) + i * img_size + j] = cv2.line(
+                lines_imgs[(img_size ** 2) + i * img_size + j], (0, i), (img_size - 1, j), 255)
+
+    lbls = np.concatenate((np.ones(lines_num, dtype='float32'), np.zeros(non_lines_num, dtype='float32')))
+
+    return np.concatenate((lines_imgs, non_lines_imgs)), lbls
+
+
+IMG_SIZE = 64
+
+
+def main():
+    images, labels = make_data(IMG_SIZE)
+
+    # print(labels[:10])
+    # imshow(images[:(IMG_SIZE ** 2 * 2)], 500)
+    #
+    # print(labels[(IMG_SIZE ** 2 * 2 - 1):(IMG_SIZE ** 2 * 2 + 10)])
+    # imshow(images[(IMG_SIZE ** 2 * 2 - 1):], 500, title='noise without lines')
+
+    images = np.expand_dims(images, axis=3)
+
+    import tensorflow.keras as ks
+
+    model_input = ks.Input(shape=(IMG_SIZE, IMG_SIZE, 1))
+    x = ks.layers.Rescaling(scale=1./255)(model_input)
+    x = ks.layers.Conv2D(1, (16, 16), padding='same', activation='relu')(x)
+    x = ks.layers.MaxPooling2D()(x)
+    x = ks.layers.Conv2D(1, (16, 16), padding='same', activation='relu')(x)
+    x = ks.layers.MaxPooling2D()(x)
+    x = ks.layers.Flatten()(x)
+    model_output = ks.layers.Dense(1, activation='sigmoid')(x)
+
+    model = ks.Model(inputs=[model_input], outputs=[model_output])
+
+    print(model.summary())
+
+    train_metrics = [ks.metrics.Recall()]
+    model.compile(loss=ks.losses.MeanSquaredError(), metrics=train_metrics)
+
+    model.fit(images, labels, epochs=40, shuffle=True)
+
+    print('Evaluating:')
+    model.evaluate(images, labels)
+
+    model_labels = model.predict(images)
+
+    # true_false_metrics = [ks.metrics.TruePositives(), ks.metrics.FalsePositives(),
+    #                       ks.metrics.TrueNegatives(), ks.metrics.FalseNegatives()]
+
+    model = ks.Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
+
+    eval_num = 50
+
+    lines_conv_output = model(images[:eval_num])[2].numpy()
+    lines_label_output = model(images[:eval_num])[-1].numpy()
+    lines_float32 = images[:eval_num].astype('float32') / 255
+    side_by_side = np.concatenate((lines_float32, lines_conv_output), axis=2)
+    imshow(side_by_side, 1000, height=500, labels=lines_label_output)
+
+    start_point = IMG_SIZE ** 2 * 2
+    non_lines_conv_output = model(images[start_point:(start_point + eval_num)])[2].numpy()
+    non_lines_label_output = model(images[start_point:(start_point + eval_num)])[-1].numpy()
+    non_lines_float32 = images[start_point:(start_point + eval_num)].astype('float32') / 255
+    side_by_side = np.concatenate((non_lines_float32, non_lines_conv_output), axis=2)
+    imshow(side_by_side, 1000, height=500, labels=non_lines_label_output)
+
+    unsure_num = 0
+    unsure_ims = np.zeros_like(images)
+    unsure_convs = np.zeros_like(images).astype('float32')
+    unsure_lbls = np.zeros_like(labels)
+
+    for i in range(len(model_labels)):
+        if (model_labels[i] < 0.6) and (model_labels[i] > 0.4):
+            unsure_ims[unsure_num] = images[i]
+            unsure_convs[unsure_num] = model(np.expand_dims(images[i], axis=0))[2].numpy()
+            unsure_lbls[unsure_num] = model(np.expand_dims(images[i], axis=0))[-1].numpy()
+
+            unsure_num += 1
+
+    if unsure_num == 0:
+        print('model unsure about no images')
+    else:
+        print(unsure_num)
+        unsure_ims = unsure_ims.astype('float32') / 255
+        unsure_ims = unsure_ims[:unsure_num]
+        unsure_convs = unsure_convs[:unsure_num]
+        unsure_lbls = unsure_lbls[:unsure_num]
+
+        side_by_side = np.concatenate((unsure_ims, unsure_convs), axis=2)
+        imshow(side_by_side, 1000, height=500, labels=unsure_lbls, title='UNSURE')
+
+    sure_num = 0
+    sure_ims = np.zeros_like(images)
+    sure_convs = np.zeros_like(images).astype('float32')
+    sure_lbls = np.zeros_like(labels)
+
+    for i in range(len(model_labels)):
+        if (model_labels[i] < 0.1) or (model_labels[i] > 0.9):
+            sure_ims[sure_num] = images[i]
+            sure_convs[sure_num] = model(np.expand_dims(images[i], axis=0))[2].numpy()
+            sure_lbls[sure_num] = model(np.expand_dims(images[i], axis=0))[-1].numpy()
+
+            sure_num += 1
+    # REMEMBER MODEL NOT NECESSARILY CORRECT ABOUT CLASSIFICATION
+    if sure_num == 0:
+        print('model not sure about any images')
+    else:
+        print(sure_num)
+        sure_ims = sure_ims.astype('float32') / 255
+        sure_ims = sure_ims[:sure_num]
+        sure_convs = sure_convs[:sure_num]
+        sure_lbls = sure_lbls[:sure_num]
+        print(sure_ims.shape, sure_convs.shape)
+
+        side_by_side = np.concatenate((sure_ims, sure_convs), axis=2)
+        imshow(side_by_side, 1000, height=500, labels=sure_lbls, title='SURE')
+
 
 if __name__ == '__main__':
-    train_images_255, train_labels = make_data()
-    val_images, val_labels = make_data()
-    test_images, test_labels = make_data()
-
-    train_images = train_images_255.astype('float32') / 255.0
-    val_images = val_images.astype('float32') / 255.0
-    test_images = test_images.astype('float32') / 255.0
-
-    imshow(train_images_255,320,320,2)
-
-    model = tf.keras.Sequential([
-        tf.keras.layers.Flatten(input_shape=(32, 32)),
-        tf.keras.layers.Dense(32*32, activation='relu'),
-        tf.keras.layers.Dense(1),
-        tf.keras.layers.Activation(tf.keras.activations.sigmoid)
-    ])
-
-    model.compile(optimizer='adam',
-                  loss=tf.keras.losses.BinaryCrossentropy(),
-                  metrics=['accuracy'])
-
-    model.fit(train_images, train_labels, epochs=4)
-
-    test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
-    print('\nTest accuracy:', test_acc)
-
-    first_ten_predictions = model.predict(test_images[:10])
-    print(first_ten_predictions)
-
-    for i in range(10):
-        cv2.imshow(
-            'noise and lines {}'.format(i),
-            cv2.resize(
-                (test_images[i] * 255.0).astype('uint8'),
-                (320, 320),
-                interpolation=cv2.INTER_NEAREST)
-        )
-        if cv2.waitKey(0) == ord('q'):
-            cv2.destroyAllWindows()
-
-    # lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
-    #     0.001,
-    #     decay_steps=1000,
-    #     decay_rate=1,
-    #     staircase=False)
-    #
-    # def get_optimizer():
-    #     return tf.keras.optimizers.Adam(lr_schedule)
+    main()

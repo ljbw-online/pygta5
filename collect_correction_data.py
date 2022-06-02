@@ -76,7 +76,7 @@ while True:
         correcting = False
 
     if not paused:
-
+        ##############
         if correcting:
             correction_to_keypresses(keys)
             data_collector.collect_datum(keys)

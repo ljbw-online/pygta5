@@ -5,14 +5,14 @@ from common import (PAUSE_KEY, SAVE_AND_QUIT_KEY,
                     release_keys, QUIT_WITHOUT_SAVING_KEY, get_keys,
                     SAVE_AND_CONTINUE_KEY)
 
-from multihot_3 import (NUM_SIGNALS, correction_to_keypresses, DataCollector)
+from key_press_frames_to_multihot_4 import (correction_to_keypresses, DataCollector)
 
 # start_time = 0
 
-MAX_DATA_PER_OUTPUT = 10000
-DATA_TARGET = MAX_DATA_PER_OUTPUT * NUM_SIGNALS
+# MAX_DATA_PER_OUTPUT = 10000
+# DATA_TARGET = MAX_DATA_PER_OUTPUT * NUM_SIGNALS
 
-data_collector = DataCollector(DATA_TARGET)
+data_collector = DataCollector(100)
 
 paused = True
 get_keys()  # Flush key presses
@@ -29,9 +29,8 @@ while True:
         else:
             paused = True
             release_keys()
+            data_collector.print_signals()
             print('Paused')
-            print('self.index', data_collector.index)
-            print('Signals:', data_collector.signal_counts.list())
             sleep(1)
     elif SAVE_AND_CONTINUE_KEY in keys:
         print('NOT IMPLEMENTED')
@@ -49,8 +48,7 @@ while True:
     elif data_collector.stop_session_decision():
         release_keys()
         paused = True
-        print('{} frames collected.'.format(data_collector.index))
-        print('Signals:', data_collector.signal_counts.list())
+        data_collector.print_signals()
         choice = input('Save? (y/n)\n')
         if choice == 'y':
             data_collector.save()

@@ -1,52 +1,66 @@
-import cv2
 from time import time, sleep
-# from tensorflow.keras.models import load_model, Model
+import multiprocessing as mp
 
-from common import (PAUSE_KEY, release_keys, QUIT_WITHOUT_SAVING_KEY, get_keys, CORRECTING_KEYS, INPUT_HEIGHT,
-                    INPUT_WIDTH, ReleaseKey, S, PressKey, W)
+import cv2
 
-from multihot_3 import get_frame, correction_to_keypresses, MODEL_NAME, ModelRunner
+from common import PAUSE_KEY, release_keys, QUIT_WITHOUT_SAVING_KEY, get_keys, CORRECTION_KEYS
+from key_press_frames_to_multihot_4 import correction_to_keypresses, ModelRunner, display_features
 
-# start_time = 0
+whole_loop_duration = 1
 
-# model = load_model(MODEL_NAME)
-# model = Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
-# prediction = []
+if __name__ == '__main__':
+    q = mp.Queue()
+    p = mp.Process(target=display_features, args=(q,))
+    p.start()
 
-model_runner = ModelRunner()
+    model_runner = ModelRunner(q)
 
-correcting = False
-paused = True
-get_keys()  # Flush key presses
-print('Press {} to unpause'.format(PAUSE_KEY))
+    correcting = False
+    paused = True
+    get_keys()  # Flush key presses
+    print('Press {} to unpause'.format(PAUSE_KEY))
 
-while True:
-    keys = get_keys()
+    while True:
+        start_time = time()
+        keys = get_keys()
 
-    if PAUSE_KEY in keys:
-        if paused:
-            paused = False
-            print('Unpaused')
+        if PAUSE_KEY in keys:
+            if paused:
+                paused = False
+                print('Unpaused')
+            else:
+                paused = True
+                release_keys()
+                print('Paused')
+            model_runner.pause_model(paused)
             sleep(1)
-        else:
-            paused = True
+        elif set(CORRECTION_KEYS) & set(keys):
+            if not correcting and not paused:
+                correcting = True
+        elif QUIT_WITHOUT_SAVING_KEY in keys:
+            print('Quitting')
+            model_runner.quit_model()
+            cv2.destroyAllWindows()
             release_keys()
-            print('Paused')
-            sleep(1)
-    elif set(CORRECTING_KEYS) & set(keys):
-        if not correcting and not paused:
-            correcting = True
-    elif QUIT_WITHOUT_SAVING_KEY in keys:
-        print('Quitting')
-        cv2.destroyAllWindows()
-        release_keys()
-        break
-    else:
-        if correcting:
-            correcting = False
+            p.join()
+            break
+        else:
+            if correcting:
+                correcting = False
 
-    if not paused:
-        if correcting:
-            correction_to_keypresses(keys)
+        if not paused:
 
-        model_runner.run_model(keys, correcting)
+            if correcting:
+                pass
+                # correction_to_keypresses(keys)
+
+            model_runner.run_model(keys, correcting)
+
+            while True:
+                duration = time() - start_time
+                if (start_time + 1/30) - time() > 0.015:  # 30fps
+                    sleep(0.001)  # ~15ms
+                else:
+                    break
+
+            # print(1 / (time() - start_time))

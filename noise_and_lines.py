@@ -1,36 +1,9 @@
 import numpy as np
 import cv2
-from time import time, sleep
-from itertools import repeat
+
+from common import imshow
 
 rng = np.random.default_rng().integers
-
-
-def imshow(ims, width, height=None, frame_rate=0, labels=None, title='noise and lines'):
-    if height is None:
-        height = width
-
-    if labels is None:
-        labels = repeat(None, len(ims))
-
-    for im, label in zip(ims, labels):
-        st = time()
-
-        if label is not None:
-            print(label)
-
-        cv2.imshow(title, cv2.resize(im, (width, height), interpolation=cv2.INTER_NEAREST))
-        if frame_rate == 0:
-            if cv2.waitKey(0) == ord('q'):
-                cv2.destroyAllWindows()
-                break
-        else:
-            if cv2.waitKey(25) == ord('q'):
-                cv2.destroyAllWindows()
-                break
-            sleep(max(0, round(1/frame_rate - (time() - st))))
-
-    cv2.destroyAllWindows()
 
 
 def make_data(img_size, non_lines_prop=1):
@@ -95,7 +68,7 @@ def main():
     # train_metrics = [ks.metrics.Recall()]
     train_metrics = [ks.metrics.Recall()]
     # opt = ks.optimizers.Adam(learning_rate=0.1)
-    model.compile(loss=ks.losses.MeanSquaredError(), metrics=train_metrics)#, optimizer=opt)
+    model.compile(loss=ks.losses.MeanSquaredError(), metrics=train_metrics)  # , optimizer=opt)
 
     model.fit(images, labels, epochs=20, shuffle=True, batch_size=64)
 

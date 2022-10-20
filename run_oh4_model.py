@@ -4,7 +4,7 @@ from time import time, sleep
 from tensorflow.keras.models import load_model
 
 from common import (MODEL_NAME, get_gta_window, PAUSE_KEY, QUIT_WITHOUT_SAVING_KEY, PressKey,
-                    W, A, S, D, get_keys, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys)
+                    W, A, S, D, get_keys, CORRECTION_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys)
 
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
@@ -34,7 +34,7 @@ while True:
             paused = True
             release_keys()
             sleep(1)
-    elif set(CORRECTING_KEYS) & set(keys):
+    elif set(CORRECTION_KEYS) & set(keys):
         if not correcting and not paused:
             correcting = True
     elif QUIT_WITHOUT_SAVING_KEY in keys:
@@ -70,13 +70,13 @@ while True:
         if correcting:
             last_correcting_time = time()
 
-            if CORRECTING_KEYS[1] in keys:
+            if CORRECTION_KEYS[1] in keys:
                 output[1] = True
-            elif CORRECTING_KEYS[2] in keys:
+            elif CORRECTION_KEYS[2] in keys:
                 output[2] = True
-            elif CORRECTING_KEYS[0] in keys:
+            elif CORRECTION_KEYS[0] in keys:
                 output[0] = True
-            elif CORRECTING_KEYS[3] in keys:
+            elif CORRECTION_KEYS[3] in keys:
                 output[3] = True
 
         else:

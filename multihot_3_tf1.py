@@ -5,9 +5,14 @@ from time import time
 from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window, LEFT,
                     BRAKE, RIGHT, release_keys, PressKey, W, S, A, D, ReleaseKey, KEYS, K)
 
+import tensorflow
+import tensorflow.keras as ks
+
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 np.set_printoptions(precision=3, floatmode='fixed', suppress=True)  # suppress stops scientific notation
+
+tensorflow.compat.v1.enable_eager_execution()  # TensorFlow 1
 
 # Model Input: the game image and a four-element array recording the durations for which each of W, A, S and D have
 # been pressed for in the recent past. Each element of this array, except the first, is incremented by one point per
@@ -19,7 +24,7 @@ np.set_printoptions(precision=3, floatmode='fixed', suppress=True)  # suppress s
 # above a certain threshold then the key is pressed. W is pressed down by default and is released whenever S is
 # pressed.
 
-MODEL_NAME = 'multihot_3'
+MODEL_NAME = __name__
 
 # DATUM_SHAPE = (INPUT_HEIGHT + 1, INPUT_WIDTH, 3)
 IMAGE_SHAPE = (INPUT_HEIGHT, INPUT_WIDTH, 3)
@@ -366,21 +371,27 @@ def prepare_data():
         # np.save('test_labels.npy', test_labels)
 
 
+def fit(model, inputs, labels, epochs=1):
+    model.fit(inputs, labels, epochs=epochs, shuffle=True, validation_split=0.2)
+
+
 def train_new_model(epochs=1, desc=''):
-    import tensorflow.keras as ks
     import datetime
+
     # Rescaling layer rescales and outputs floats
     image_input = ks.Input(shape=(INPUT_HEIGHT, INPUT_WIDTH, 3), name='image_input')
-    x = ks.layers.Rescaling(scale=1. / 255)(image_input)
-    x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last')(x)  # , kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    # x = ks.layers.Rescaling(scale=1. / 255)(image_input)
+    x = ks.layers.Conv2D(6, 4, padding='same', activation='relu', data_format='channels_last',
+                         name='1st_conv')(image_input)  # , kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
-    x = ks.layers.Conv2D(6, 4, padding='same', activation='relu', data_format='channels_last')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    x = ks.layers.Conv2D(6, 4, padding='same', activation='relu', data_format='channels_last',
+                         name='2nd_conv')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
     x = ks.layers.Flatten()(x)
     x = ks.layers.Dense(16, activation='relu')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
 
     scores_input = ks.Input(shape=(4,), name='scores_input')
-    y = ks.layers.Dense(16, activation='relu')(scores_input)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(scores_input)
+    y = ks.layers.Dense(16, activation='relu', name='penult_dense')(scores_input)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(scores_input)
 
     z = ks.layers.concatenate([x, y])
     # z = ks.layers.Dropout(0.4)(z)
@@ -390,7 +401,10 @@ def train_new_model(epochs=1, desc=''):
 
     print(model.summary())
 
-    training_images = np.load('training_images.npy')
+    training_images = np.load('training_images_float32.npy', mmap_mode='r')
+    # NEED TO RESCALE FLOAT32 FILE WHEN SAVING TO DISC
+    # training_images = training_images.astype('float32') / 255  # RESCALE
+
     training_scores = np.load('training_scores.npy')
     training_labels = np.load('training_labels.npy')
     # test_images = np.load('test_images.npy')
@@ -399,40 +413,40 @@ def train_new_model(epochs=1, desc=''):
 
     model.compile(loss=ks.losses.MeanSquaredError(), metrics=['accuracy'])
 
-    log_dir = './logs/' + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + desc
-    tensorboard = ks.callbacks.TensorBoard(log_dir=log_dir, update_freq='batch')
+    # log_dir = './logs/' + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + desc
+    # tensorboard = ks.callbacks.TensorBoard(log_dir=log_dir, update_freq='batch')
+    # exit()
 
-    model.fit({'image_input': training_images, 'scores_input': training_scores},
-              {'model_output': training_labels},
-              epochs=epochs,
-              shuffle=True,
-              callbacks=[tensorboard],
-              validation_split=0.2)
+    inputs = {'image_input': training_images, 'scores_input': training_scores}
+    labels = {'model_output': training_labels}
+
+    fit(model, inputs, labels, epochs=epochs)
+
+    # model.fit({'image_input': training_images, 'scores_input': training_scores},
+    #           {'model_output': training_labels},
+    #           epochs=epochs,
+    #           shuffle=True,
+    #           # callbacks=[tensorboard],
+    #           validation_split=0.2)
 
     # for prediction, label in zip(model.predict({'image_input': test_images[:15]}), test_labels[:15]):
     #     print(prediction, label)
 
     while True:
-        # test_loss, test_metric = \
-        #     model.evaluate({'image_input': test_images, 'scores_input': test_scores}, {'model_output': test_labels})
-        #
-        # print('Test accuracy:', test_metric)
-
         continue_choice = input('Enter a number N to continue training for N epochs\n'
                                 'Enter s to save and quit\n'
+                                'Enter c to save then continue training\n'
                                 'Enter q to quit without saving\n'
-                                '(N/s/q)\n')
+                                '(N/s/c/q)\n')
 
         if continue_choice.isnumeric():
-            # model.fit({'image_input': training_images, 'scores_input': training_scores},
-            #           {'model_output': training_labels},
-            #           epochs=int(continue_choice),
-            #           shuffle=True,
-            #           callbacks=[tensorboard])
-            print('NOT IMPLEMENTED')
+            fit(model, inputs, labels, epochs=int(continue_choice))
         elif continue_choice == 's':
             model.save(MODEL_NAME)
             return
+        elif continue_choice == 'c':
+            model.save(MODEL_NAME)
+            fit(model, inputs, labels, epochs=1)
         elif continue_choice == 'q':
             return
 
@@ -508,12 +522,99 @@ def rescale(np_array):
 layer_outputs = []  # PyCharm appeasement
 
 
+def display_features(model_layers, correcting):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    # conv1 = rescale(model_layers[1][0].numpy())
+    conv1 = rescale(model_layers[0][0].numpy())
+    conv1_f1 = conv1[:, :, 0]
+    conv1_f2 = conv1[:, :, 1]
+    conv1_f3 = conv1[:, :, 2]
+    conv1_f4 = conv1[:, :, 3]
+    conv1_f5 = conv1[:, :, 4]
+    conv1_f6 = conv1[:, :, 5]
+
+    conv2 = rescale(model_layers[1][0].numpy())
+    conv2_f1 = conv2[:, :, 0]
+    conv2_f2 = conv2[:, :, 1]
+    conv2_f3 = conv2[:, :, 2]
+    conv2_f4 = conv2[:, :, 3]
+    conv2_f5 = conv2[:, :, 4]
+    conv2_f6 = conv2[:, :, 5]
+    # conv2_f7 = conv2[:, :, 6]
+    # conv2_f8 = conv2[:, :, 7]
+
+    conv1_f12 = np.concatenate((conv1_f1, conv1_f2), axis=1)
+    conv1_f34 = np.concatenate((conv1_f3, conv1_f4), axis=1)
+    conv1_f56 = np.concatenate((conv1_f5, conv1_f6), axis=1)
+    conv_img1 = np.concatenate((conv1_f12, conv1_f34, conv1_f56))
+
+    conv2_f12 = np.concatenate((conv2_f1, conv2_f2), axis=1)
+    conv2_f34 = np.concatenate((conv2_f3, conv2_f4), axis=1)
+    conv2_f56 = np.concatenate((conv2_f5, conv2_f6), axis=1)
+    conv_img2 = np.concatenate((conv2_f12, conv2_f34, conv2_f56))
+
+    conv_img2 = cv2.resize(conv_img2, (320, 270), interpolation=cv2.INTER_NEAREST)
+    # conv_img3 = cv2.resize(conv_img3, (320, 180), interpolation=cv2.INTER_NEAREST)
+
+    conv_features = np.concatenate((conv_img1, conv_img2))  # , conv_img3))
+    conv_features = cv2.resize(conv_features, (640, 900), interpolation=cv2.INTER_NEAREST)
+
+    if correcting:
+        # 1.0 is white because conv_features is still float32
+        cv2.putText(conv_features, 'Correcting', (128, 240), font, 2, (1.0,), 3)
+        cv2.putText(conv_features, 'Correcting', (128, 600), font, 2, (1.0,), 3)
+        cv2.putText(conv_features, 'Correcting', (128, 960), font, 2, (1.0,), 3)
+
+    conv_features = (conv_features * 255).astype('uint8')
+    # cv2.imshow('CONVOLUTIONAL FILTERS', conv_features)
+
+    penult_dense = rescale(model_layers[2][0].numpy())
+    penult_dense = (penult_dense * 255).astype('uint8')
+    penult_dense = np.expand_dims(penult_dense, 0)
+    penult_dense = cv2.resize(penult_dense, (640, 30), interpolation=cv2.INTER_NEAREST)
+
+    scores = (np.array(self.current_key_scores) * 255)
+    for i in range(4):
+        scores[i] = min(255., scores[i])
+    scores = scores.astype('uint8')
+    scores = np.expand_dims(scores, 0)
+    scores = cv2.resize(scores, (640, 50), interpolation=cv2.INTER_NEAREST)
+
+    wasd = np.array(self.key_states).astype('uint8')
+    wasd = wasd * 255
+    wasd = np.expand_dims(wasd, 0)
+    wasd = cv2.resize(wasd, (640, 50), interpolation=cv2.INTER_NEAREST)
+    text_top_left = (round(640 * 0.1), round(50 * 0.9))
+    cv2.putText(wasd, 'W', text_top_left, font, 2, (128,), 3)
+    text_top_left = (round(640 * 0.35), round(50 * 0.9))
+    cv2.putText(wasd, 'A', text_top_left, font, 2, (128,), 3)
+    text_top_left = (round(640 * 0.60), round(50 * 0.9))
+    cv2.putText(wasd, 'S', text_top_left, font, 2, (128,), 3)
+    text_top_left = (round(640 * 0.85), round(50 * 0.9))
+    cv2.putText(wasd, 'D', text_top_left, font, 2, (128,), 3)
+
+    penult_scores_wasd = np.concatenate((penult_dense, scores, wasd))
+    # print(penult_scores_wasd.dtype, conv_features.dtype)
+    features_scores_keys = np.concatenate((conv_features, penult_scores_wasd))
+    cv2.imshow('FEATURES, SCORES and KEYS PRESSED', features_scores_keys)
+
+    if cv2.waitKey(25) & 0xFF == ord('q'):
+        cv2.destroyAllWindows()
+        return
+
+
 class ModelRunner(InputCollector):
     def __init__(self):
         super().__init__()
         from tensorflow.keras.models import load_model, Model
         model = load_model(MODEL_NAME)
-        model = Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
+        # model = Model(inputs=model.inputs, outputs=[layer.output for layer in model.layers])
+        # print(model.get_layer('1st_conv'))
+        model = Model(inputs=model.inputs, outputs=[model.get_layer('1st_conv').output,
+                                                    model.get_layer('2nd_conv').output,
+                                                    model.get_layer('penult_dense').output,
+                                                    model.get_layer('model_output').output])
         self.model = model
         self.stuck = False
         self.stuck_time = 0
@@ -521,13 +622,16 @@ class ModelRunner(InputCollector):
     def display_features(self, model_layers, correcting):
         font = cv2.FONT_HERSHEY_SIMPLEX
 
-        conv1 = rescale(model_layers[2][0].numpy())
+        # conv1 = rescale(model_layers[1][0].numpy())
+        conv1 = rescale(model_layers[0][0].numpy())
         conv1_f1 = conv1[:, :, 0]
         conv1_f2 = conv1[:, :, 1]
         conv1_f3 = conv1[:, :, 2]
         conv1_f4 = conv1[:, :, 3]
+        conv1_f5 = conv1[:, :, 4]
+        conv1_f6 = conv1[:, :, 5]
 
-        conv2 = rescale(model_layers[4][0].numpy())
+        conv2 = rescale(model_layers[1][0].numpy())
         conv2_f1 = conv2[:, :, 0]
         conv2_f2 = conv2[:, :, 1]
         conv2_f3 = conv2[:, :, 2]
@@ -539,7 +643,8 @@ class ModelRunner(InputCollector):
 
         conv1_f12 = np.concatenate((conv1_f1, conv1_f2), axis=1)
         conv1_f34 = np.concatenate((conv1_f3, conv1_f4), axis=1)
-        conv_img1 = np.concatenate((conv1_f12, conv1_f34))
+        conv1_f56 = np.concatenate((conv1_f5, conv1_f6), axis=1)
+        conv_img1 = np.concatenate((conv1_f12, conv1_f34, conv1_f56))
 
         conv2_f12 = np.concatenate((conv2_f1, conv2_f2), axis=1)
         conv2_f34 = np.concatenate((conv2_f3, conv2_f4), axis=1)
@@ -550,7 +655,7 @@ class ModelRunner(InputCollector):
         # conv_img3 = cv2.resize(conv_img3, (320, 180), interpolation=cv2.INTER_NEAREST)
 
         conv_features = np.concatenate((conv_img1, conv_img2))  # , conv_img3))
-        conv_features = cv2.resize(conv_features, (640, 720), interpolation=cv2.INTER_NEAREST)
+        conv_features = cv2.resize(conv_features, (640, 900), interpolation=cv2.INTER_NEAREST)
 
         if correcting:
             # 1.0 is white because conv_features is still float32
@@ -561,7 +666,7 @@ class ModelRunner(InputCollector):
         conv_features = (conv_features * 255).astype('uint8')
         # cv2.imshow('CONVOLUTIONAL FILTERS', conv_features)
 
-        penult_dense = rescale(model_layers[-2][0].numpy())
+        penult_dense = rescale(model_layers[2][0].numpy())
         penult_dense = (penult_dense * 255).astype('uint8')
         penult_dense = np.expand_dims(penult_dense, 0)
         penult_dense = cv2.resize(penult_dense, (640, 30), interpolation=cv2.INTER_NEAREST)
@@ -624,7 +729,7 @@ class ModelRunner(InputCollector):
         #     ReleaseKey(K)
 
         if not correcting:
-            layer_outputs = self.model([np.expand_dims(self.current_frame, 0),
+            layer_outputs = self.model([np.expand_dims(self.current_frame.astype('float32') / 255, 0),
                                         np.expand_dims(np.array(self.current_key_scores, dtype='float32'), 0)])
 
             prediction_to_key_presses(layer_outputs[-1][0])

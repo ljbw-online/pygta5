@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 from time import time
+from datetime import datetime
 
 from common import (INPUT_WIDTH, INPUT_HEIGHT, get_gta_window, LEFT,
                     BRAKE, RIGHT, release_keys, PressKey, W, S, A, D, ReleaseKey, KEYS, K)
@@ -9,6 +10,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 np.set_printoptions(precision=3, floatmode='fixed', suppress=True)  # suppress stops scientific notation
 
+# THIS MODULE IS UNFINISHED
 # Model Input: the game image and a four-element array recording the durations for which each of W, A, S and D have
 # been pressed for in the recent past. Each element of this array, except the first, is incremented by one point per
 # second whilst the key is pressed and decremented at the same rate whilst the key is not pressed, stopping at zero.
@@ -19,7 +21,11 @@ np.set_printoptions(precision=3, floatmode='fixed', suppress=True)  # suppress s
 # above a certain threshold then the key is pressed. W is pressed down by default and is released whenever S is
 # pressed.
 
-MODEL_NAME = 'multihot_3'
+# Balancing Scheme: common driving actions, like going forward without turning or breaking, are no longer discarded
+# after a quota has been reached. They are all saved and then randomly selected from at training time. Less frequent
+# actions, e.g. braking, will be duplicated in the training data.
+
+MODEL_NAME = 'multihot_3_non_discarding'
 
 # DATUM_SHAPE = (INPUT_HEIGHT + 1, INPUT_WIDTH, 3)
 IMAGE_SHAPE = (INPUT_HEIGHT, INPUT_WIDTH, 3)
@@ -28,13 +34,13 @@ IMAGE_SHAPE = (INPUT_HEIGHT, INPUT_WIDTH, 3)
 OUTPUT_LENGTH = 3
 OUTPUT_SHAPE = (OUTPUT_LENGTH,)
 
-DATA_TARGET = 0
-
 # Number of distinct signals which the model can output. A datum can serve as an example of more than one output
 # signal e.g. braking and turning left on the same frame.
 # turning left, braking and possibly but not necessarily turning, turning right, neither turning nor braking
 NUM_SIGNALS = 4
-MAX_DATA_PER_SIGNAL = 0  # Defining at module level to appease PyCharm, which also doesn't like it being None.
+
+# DATA_TARGET = 60000  # Roughly 5GB per 60k frames.
+MAX_DATA_PER_SIGNAL = 4000
 
 DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 360
@@ -119,57 +125,74 @@ class InputCollector:
 
 class DataCollector(InputCollector):
 
-    def __init__(self, data_target):
+    def __init__(self):
         super().__init__()
 
-        global DATA_TARGET
-        global MAX_DATA_PER_SIGNAL
-        DATA_TARGET = data_target
-        MAX_DATA_PER_SIGNAL = data_target / NUM_SIGNALS
+        # global DATA_TARGET
+        # global MAX_DATA_PER_SIGNAL
+        # DATA_TARGET = data_target
+        # MAX_DATA_PER_SIGNAL = data_target / NUM_SIGNALS
 
         # self.correction_data = False
 
-        self.images = np.zeros((data_target,) + IMAGE_SHAPE, dtype='uint8')
-        self.key_scores = np.zeros((data_target, 4), dtype='float32')
-        self.labels = np.zeros((data_target,) + OUTPUT_SHAPE)
+        self.forward_images = np.zeros((MAX_DATA_PER_SIGNAL,) + IMAGE_SHAPE, dtype='uint8')
+        self.left_images = np.zeros((MAX_DATA_PER_SIGNAL,) + IMAGE_SHAPE, dtype='uint8')
+        self.brake_images = np.zeros((MAX_DATA_PER_SIGNAL,) + IMAGE_SHAPE, dtype='uint8')
+        self.right_images = np.zeros((MAX_DATA_PER_SIGNAL,) + IMAGE_SHAPE, dtype='uint8')
 
-        self.index = 0
+        self.forward_key_scores = np.zeros((MAX_DATA_PER_SIGNAL, 4), dtype='float32')
+        self.left_key_scores = np.zeros((MAX_DATA_PER_SIGNAL, 4), dtype='float32')
+        self.brake_key_scores = np.zeros((MAX_DATA_PER_SIGNAL, 4), dtype='float32')
+        self.right_key_scores = np.zeros((MAX_DATA_PER_SIGNAL, 4), dtype='float32')
+
+        self.forward_labels = np.zeros((MAX_DATA_PER_SIGNAL,) + OUTPUT_SHAPE)
+        self.left_labels = np.zeros((MAX_DATA_PER_SIGNAL,) + OUTPUT_SHAPE)
+        self.brake_labels = np.zeros((MAX_DATA_PER_SIGNAL,) + OUTPUT_SHAPE)
+        self.right_labels = np.zeros((MAX_DATA_PER_SIGNAL,) + OUTPUT_SHAPE)
+
+        self.forward_index = 0
+        self.left_index = 0
+        self.brake_index = 0
+        self.right_index = 0
+
         self.signal_counts = SignalCounts
 
-    def conditionally_add_datum(self):
+    def add_datum(self):
         left = self.current_label[0]
         brake = self.current_label[1]
         right = self.current_label[2]
 
-        decision = False
+        if brake:
+            self.brake_images[self.brake_index] = self.current_frame
+            self.brake_key_scores[self.brake_index] = self.current_key_scores
+            self.brake_labels[self.brake_index] = self.current_label
+            self.brake_index += 1
+        elif left:
+            self.left_images[self.left_index] = self.current_frame
+            self.left_key_scores[self.brake_index] = self.current_key_scores
+            self.left_labels[self.brake_index] = self.current_label
+            self.left_index += 1
+        elif right:
+            self.right_images[self.left_index] = self.current_frame
+            self.right_key_scores[self.brake_index] = self.current_key_scores
+            self.right_labels[self.brake_index] = self.current_label
+            self.right_index += 1
+        elif not any(self.current_label):
+            self.forward_images[self.left_index] = self.current_frame
+            self.forward_key_scores[self.brake_index] = self.current_key_scores
+            self.forward_labels[self.brake_index] = self.current_label
+            self.forward_index += 1
 
-        if brake and (self.signal_counts.brake < MAX_DATA_PER_SIGNAL):
-            decision = True
-            self.signal_counts.brake += 1
-        elif left and (self.signal_counts.left < MAX_DATA_PER_SIGNAL):
-            decision = True
-            self.signal_counts.left += 1
-        elif right and (self.signal_counts.right < MAX_DATA_PER_SIGNAL):
-            decision = True
-            self.signal_counts.right += 1
-        elif not any(self.current_label) and (self.signal_counts.forward_and_straight_on < MAX_DATA_PER_SIGNAL):
-            decision = True
-            self.signal_counts.forward_and_straight_on += 1
+        datum_count = self.forward_index + self.left_index + self.brake_index + self.right_index
+        if (datum_count % round(MAX_DATA_PER_SIGNAL / 10) == 0) and (datum_count != 0):
+            print(self.forward_index, self.left_index, self.brake_index, self.right_index)
 
-        if decision:
-            self.images[self.index] = self.current_frame
-            self.key_scores[self.index] = self.current_key_scores
-            self.labels[self.index] = self.current_label
-
-            if (self.index % round(MAX_DATA_PER_SIGNAL/10) == 0) and (self.index != 0):
-                print(self.signal_counts.list())
-
-            self.index += 1
+        if max(self.forward_index, self.left_index, self.brake_index, self.right_index) == MAX_DATA_PER_SIGNAL:
+            self.save()
 
     def collect_datum(self, keys):
         self.collect_input(keys)
-        self.conditionally_add_datum()
-        # if not correction_data:
+        self.add_datum()
         if not self.correction_data:
             self.display_frame()
 
@@ -211,29 +234,88 @@ class DataCollector(InputCollector):
             return
 
     def save(self):
-        if self.correction_data:
-            images_fn = 'correction_images_uint8.npy'
-            key_scores_fn = 'correction_key_scores_float32.npy'
-            labels_fn = 'correction_labels_float32.npy'
+        signal = ''
+        time_stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if self.forward_index == MAX_DATA_PER_SIGNAL:
+            signal = 'forward'
+        elif self.left_index == MAX_DATA_PER_SIGNAL:
+            signal = 'left'
+        elif self.brake_index == MAX_DATA_PER_SIGNAL:
+            signal = 'brake'
+        elif self.right_index == MAX_DATA_PER_SIGNAL:
+            signal = 'right'
         else:
-            images_fn = 'images_uint8.npy'
-            key_scores_fn = 'key_scores_float32.npy'
-            labels_fn = 'labels_float32.npy'
+            print('No indices equal MAX_DATA_PER_SIGNAL!')
+            exit()
 
-        print('Saving {} frames'.format(self.index))
+        images_fn = signal + '_images_uint8_' + time_stamp + '.npy'
+        key_scores_fn = signal + '_key_scores_float32_' + time_stamp + '.npy'
+        labels_fn = signal + '_labels_float32_' + time_stamp + '.npy'
 
-        self.images = self.images[:self.index]
-        np.save(images_fn, self.images)
+        if signal == 'forward':
+            images_array = self.forward_images
+            key_scores_array = self.forward_key_scores
+            labels_array = self.forward_labels
 
-        self.key_scores = self.key_scores[:self.index]
-        np.save(key_scores_fn, self.key_scores)
+            self.forward_index = 0
 
-        self.labels = self.labels[:self.index]
-        np.save(labels_fn, self.labels.astype('float32'))
+        elif signal == 'left':
+            images_array = self.left_images
+            key_scores_array = self.left_key_scores
+            labels_array = self.left_labels
+
+            self.left_index = 0
+
+        elif signal == 'brake':
+            images_array = self.brake_images
+            key_scores_array = self.brake_key_scores
+            labels_array = self.brake_labels
+
+            self.brake_index = 0
+
+        elif signal == 'right':
+            images_array = self.right_images
+            key_scores_array = self.right_key_scores
+            labels_array = self.right_labels
+
+            self.right_index = 0
+
+        else:  # PyCharm appeasement
+            images_array = None
+            key_scores_array = None
+            labels_array = None
+            exit()
+
+        print('Saving {} '.format(MAX_DATA_PER_SIGNAL) + signal + ' frames')
+
+        np.save(images_fn, images_array)
+        np.save(key_scores_fn, key_scores_array)
+        np.save(labels_fn, labels_array)
+
+        # if self.correction_data:
+        #     images_fn = 'correction_images_uint8.npy'
+        #     key_scores_fn = 'correction_key_scores_float32.npy'
+        #     labels_fn = 'correction_labels_float32.npy'
+        # else:
+        #     images_fn = 'images_uint8.npy'
+        #     key_scores_fn = 'key_scores_float32.npy'
+        #     labels_fn = 'labels_float32.npy'
+        #
+        # print('Saving {} frames'.format(self.index))
+        #
+        # self.images = self.images[:self.index]
+        # np.save(images_fn, self.images)
+        #
+        # self.key_scores = self.key_scores[:self.index]
+        # np.save(key_scores_fn, self.key_scores)
+        #
+        # self.labels = self.labels[:self.index]
+        # np.save(labels_fn, self.labels.astype('float32'))
 
     def stop_session_decision(self):
         # Always increment index *after* deciding whether to save datum
-        return self.index == DATA_TARGET
+        # return self.index == DATA_TARGET
+        return False
 
 
 def correction_to_keypresses(keys):
@@ -366,7 +448,7 @@ def prepare_data():
         # np.save('test_labels.npy', test_labels)
 
 
-def train_new_model(epochs=1, desc=''):
+def train_new_model(epochs=1, model_desc=''):
     import tensorflow.keras as ks
     import datetime
     # Rescaling layer rescales and outputs floats
@@ -374,7 +456,7 @@ def train_new_model(epochs=1, desc=''):
     x = ks.layers.Rescaling(scale=1. / 255)(image_input)
     x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last')(x)  # , kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
-    x = ks.layers.Conv2D(6, 4, padding='same', activation='relu', data_format='channels_last')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
+    x = ks.layers.Conv2D(4, 4, padding='same', activation='relu', data_format='channels_last')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
     x = ks.layers.MaxPooling2D(data_format='channels_last')(x)
     x = ks.layers.Flatten()(x)
     x = ks.layers.Dense(16, activation='relu')(x)  #, kernel_regularizer=ks.regularizers.l2(0.0001))(x)
@@ -399,7 +481,7 @@ def train_new_model(epochs=1, desc=''):
 
     model.compile(loss=ks.losses.MeanSquaredError(), metrics=['accuracy'])
 
-    log_dir = './logs/' + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + desc
+    log_dir = './logs/' + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + model_desc
     tensorboard = ks.callbacks.TensorBoard(log_dir=log_dir, update_freq='batch')
 
     model.fit({'image_input': training_images, 'scores_input': training_scores},
@@ -532,21 +614,16 @@ class ModelRunner(InputCollector):
         conv2_f2 = conv2[:, :, 1]
         conv2_f3 = conv2[:, :, 2]
         conv2_f4 = conv2[:, :, 3]
-        conv2_f5 = conv2[:, :, 4]
-        conv2_f6 = conv2[:, :, 5]
+        # conv2_f5 = conv2[:, :, 4]
+        # conv2_f6 = conv2[:, :, 5]
         # conv2_f7 = conv2[:, :, 6]
         # conv2_f8 = conv2[:, :, 7]
 
-        conv1_f12 = np.concatenate((conv1_f1, conv1_f2), axis=1)
-        conv1_f34 = np.concatenate((conv1_f3, conv1_f4), axis=1)
-        conv_img1 = np.concatenate((conv1_f12, conv1_f34))
+        conv_img1 = np.concatenate((np.concatenate((conv1_f1, conv1_f2), axis=1), np.concatenate((conv1_f3, conv1_f4), axis=1)))
+        conv_img2 = np.concatenate((np.concatenate((conv2_f1, conv2_f2), axis=1), np.concatenate((conv2_f3, conv2_f4), axis=1)))
+        # conv_img3 = np.concatenate((np.concatenate((conv2_f5, conv2_f6), axis=1), np.concatenate((conv2_f7, conv2_f8), axis=1)))
 
-        conv2_f12 = np.concatenate((conv2_f1, conv2_f2), axis=1)
-        conv2_f34 = np.concatenate((conv2_f3, conv2_f4), axis=1)
-        conv2_f56 = np.concatenate((conv2_f5, conv2_f6), axis=1)
-        conv_img2 = np.concatenate((conv2_f12, conv2_f34, conv2_f56))
-
-        conv_img2 = cv2.resize(conv_img2, (320, 270), interpolation=cv2.INTER_NEAREST)
+        conv_img2 = cv2.resize(conv_img2, (320, 180), interpolation=cv2.INTER_NEAREST)
         # conv_img3 = cv2.resize(conv_img3, (320, 180), interpolation=cv2.INTER_NEAREST)
 
         conv_features = np.concatenate((conv_img1, conv_img2))  # , conv_img3))
@@ -608,20 +685,20 @@ class ModelRunner(InputCollector):
                     self.key_press_times[i] = self.t
                     self.key_score_maxes[i] = 0
 
-        # if (not correcting) and self.current_key_scores[0] > 15.0:
-        #     # self.current_key_scores[0] = 0
-        #     # self.key_score_mins[0] = 0
-        #     # self.key_press_times[0] = self.t
-        #     # self.key_score_maxes[0] = 0
-        #     if not self.stuck:
-        #         print('reversing')
-        #
-        #     self.stuck = True
-        #     self.stuck_time = self.t
-        #     PressKey(K)
-        # elif self.stuck and ((self.t - self.stuck_time) > 2.9):
-        #     self.stuck = False
-        #     ReleaseKey(K)
+        if self.current_key_scores[0] > 15.0:
+            # self.current_key_scores[0] = 0
+            # self.key_score_mins[0] = 0
+            # self.key_press_times[0] = self.t
+            # self.key_score_maxes[0] = 0
+            if not self.stuck:
+                print('reversing')
+
+            self.stuck = True
+            self.stuck_time = self.t
+            PressKey(K)
+        elif self.stuck and ((self.t - self.stuck_time) > 2.9):
+            self.stuck = False
+            ReleaseKey(K)
 
         if not correcting:
             layer_outputs = self.model([np.expand_dims(self.current_frame, 0),

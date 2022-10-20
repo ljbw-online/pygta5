@@ -4,7 +4,7 @@ from time import time, sleep
 from tensorflow.keras.models import load_model
 
 from common import (INPUT_WIDTH, INPUT_HEIGHT, MODEL_NAME, get_gta_window, PAUSE_KEY, QUIT_WITHOUT_SAVING_KEY, PressKey,
-                    W, A, S, D, get_keys, CORRECTING_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys, OUTPUT_SHAPE,
+                    W, A, S, D, get_keys, CORRECTION_KEYS, DISPLAY_WIDTH, DISPLAY_HEIGHT, release_keys, OUTPUT_SHAPE,
                     SAVE_AND_QUIT_KEY, CORRECTION_DATA_FILE_NAME)
 
 model = load_model(MODEL_NAME)
@@ -35,7 +35,7 @@ while True:
             print('Correction data at {} frames'.format(cd_buffer_count))
             release_keys()
             sleep(1)
-    elif set(CORRECTING_KEYS) & set(keys):
+    elif set(CORRECTION_KEYS) & set(keys):
         if not correcting and not paused:
             correcting = True
     elif SAVE_AND_QUIT_KEY in keys:
@@ -71,13 +71,13 @@ while True:
         if correcting:
             last_correcting_time = time()
 
-            if CORRECTING_KEYS[2] in keys:  # If I'm pressing s then brake regardless of other keys
+            if CORRECTION_KEYS[2] in keys:  # If I'm pressing s then brake regardless of other keys
                 output[3] = True
-            elif CORRECTING_KEYS[1] in keys:
+            elif CORRECTION_KEYS[1] in keys:
                 output[1] = True
-            elif CORRECTING_KEYS[3] in keys:
+            elif CORRECTION_KEYS[3] in keys:
                 output[2] = True
-            elif CORRECTING_KEYS[0] in keys:  # Only press forward if I am not pressing left or right
+            elif CORRECTION_KEYS[0] in keys:  # Only press forward if I am not pressing left or right
                 output[0] = True
 
             output_row[0, :OUTPUT_SHAPE] = output.astype('float32')

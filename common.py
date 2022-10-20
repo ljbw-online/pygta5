@@ -1,3 +1,7 @@
+from itertools import repeat
+from time import time, sleep
+
+import cv2
 import numpy as np
 from numpy import array_equal as ae
 import platform
@@ -22,11 +26,17 @@ if platform.system() == 'Windows':
             height = y2 - top + 1
         else:
             hwin = win32gui.FindWindow(None, WINDOW_NAME)
-            # rect = win32gui.GetClientRect(hwin)
-            left = CAPTURE_REGION[0] + 3  # left and top have to be offset by these values or we get
-            top = CAPTURE_REGION[1] + 26  # pixels from outside the window. No idea why.
-            width = CAPTURE_REGION[2]  # Don't need to add 1 to width & height.
-            height = CAPTURE_REGION[3]
+            (left, top, right, bottom) = win32gui.GetWindowRect(hwin)
+            global window_width
+            global window_height
+            window_width = right - left
+            window_height = bottom - top
+            capture_region = (
+                int(window_width / 4), int(window_height / 4), int(window_width / 2), int(window_height / 2))
+            left = capture_region[0]  # + 3  # left and top have to be offset by these values or we get
+            top = capture_region[1]  # + 26  # pixels from outside the window. No idea why.
+            width = capture_region[2]  # Don't need to add 1 to width & height.
+            height = capture_region[3]
 
         hwindc = win32gui.GetWindowDC(hwin)
         srcdc = win32ui.CreateDCFromHandle(hwindc)
@@ -138,17 +148,18 @@ if platform.system() == 'Windows':
                 keys.append(key)
         return keys
 
-WINDOW_WIDTH = 1280
-WINDOW_HEIGHT = 720
+window_width = 1280
+window_height = 720
 # topleft_x, topleft_y, width, height
-CAPTURE_REGION = (int(WINDOW_WIDTH / 4), int(WINDOW_HEIGHT / 4), int(WINDOW_WIDTH / 2), int(WINDOW_HEIGHT / 2))
+
 RESIZE_WIDTH = 160
 RESIZE_HEIGHT = 90
 INPUT_WIDTH = RESIZE_WIDTH
 INPUT_HEIGHT = RESIZE_HEIGHT
 MODEL_NAME = 'Taxi'
 
-WINDOW_NAME = 'Grand Theft Auto V'
+# WINDOW_NAME = 'Grand Theft Auto V'
+WINDOW_NAME = 'FiveM® by Cfx.re - FXServer, but unconfigured'
 INITIAL_DATA_FILE_NAME = 'initial_data_uint8.npy'
 CORRECTION_DATA_FILE_NAME = 'correction_data_uint8.npy'
 PAUSE_KEY = 'Z'
@@ -156,16 +167,21 @@ SAVE_AND_QUIT_KEY = 'X'
 SAVE_AND_CONTINUE_KEY = 'B'
 QUIT_WITHOUT_SAVING_KEY = '5'
 KEYS = ['W', 'A', 'S', 'D']
-CORRECTING_KEYS = ['I', 'J', 'K', 'L']
-FORWARD = CORRECTING_KEYS[0]
-LEFT = CORRECTING_KEYS[1]
-BRAKE = CORRECTING_KEYS[2]
-RIGHT = CORRECTING_KEYS[3]
+CORRECTION_KEYS = ['I', 'J', 'K', 'L']
+FORWARD = CORRECTION_KEYS[0]
+LEFT = CORRECTION_KEYS[1]
+BRAKE = CORRECTION_KEYS[2]
+RIGHT = CORRECTION_KEYS[3]
+SCANCODES = [0x17, 0x24, 0x25, 0x26]
+I = SCANCODES[0]
+J = SCANCODES[1]
+K = SCANCODES[2]
+L = SCANCODES[3]
 
-I = 0x17
-J = 0x24
-K = 0x25
-L = 0x26
+# I = 0x17
+# J = 0x24
+# K = 0x25
+# L = 0x26
 
 DISPLAY_WIDTH = 960
 DISPLAY_HEIGHT = 540
@@ -233,3 +249,32 @@ oh4_w = np.array([1, 0, 0, 0], dtype='float32')
 oh4_wa = np.array([0, 1, 0, 0], dtype='float32')
 oh4_wd = np.array([0, 0, 1, 0], dtype='float32')
 oh4_s = np.array([0, 0, 0, 1], dtype='float32')
+
+
+# Generic version of this function for use in experimental scripts
+def imshow(data_param, width=750, height=None, frame_rate=0, title='imshow'):
+    if height is None:
+        height = data_param.image[0].shape[0] * round(width / data_param.image[0].shape[1])
+
+    names = data_param.dtype.names
+
+    for datum in data_param:
+        st = time()
+        for name, field in zip(names, datum):
+            if field.ndim > 1:
+                field = cv2.resize(field, (width, height), interpolation=cv2.INTER_NEAREST)
+                cv2.imshow(title, field)
+            else:
+                print(name, field)
+
+        if frame_rate == 0:
+            if cv2.waitKey(0) == ord('q'):
+                cv2.destroyAllWindows()
+                return
+        else:
+            if cv2.waitKey(25) == ord('q'):
+                cv2.destroyAllWindows()
+                return
+            sleep(max(0, round(1/frame_rate - (time() - st))))
+
+    cv2.destroyAllWindows()

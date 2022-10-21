@@ -1,14 +1,20 @@
-import cv2
 from time import sleep  # , time
+import multiprocessing as mp
+
+import cv2
 
 from common import (PAUSE_KEY, SAVE_AND_QUIT_KEY,
                     release_keys, QUIT_WITHOUT_SAVING_KEY,
                     get_keys, SAVE_AND_CONTINUE_KEY, CORRECTION_KEYS)
 
-from key_press_frames_to_multihot_4 import correction_to_keypresses, DataCollector, ModelRunner
+from key_press_frames_to_multihot_4 import correction_to_keypresses
+from key_press_frames_to_multihot_4.run import ModelRunner
+from key_press_frames_to_multihot_4.collect_correction import DataCollector
 
-data_collector = DataCollector(50000, correction_data=True)
-model_runner = ModelRunner(correction_data=True)
+q = mp.Queue
+
+data_collector = DataCollector(50000)
+model_runner = ModelRunner(q)
 
 # data_collector.correction_data = True
 # model_runner.correction_data = True

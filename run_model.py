@@ -4,14 +4,15 @@ import multiprocessing as mp
 import cv2
 
 from common import PAUSE_KEY, release_keys, QUIT_WITHOUT_SAVING_KEY, get_keys, CORRECTION_KEYS
-from key_press_frames_to_multihot_4 import correction_to_keypresses, ModelRunner, display_features
+# from key_press_frames_to_multihot_4 import correction_to_keypresses
+from key_press_frames_to_multihot_4.run import ModelRunner
 
 whole_loop_duration = 1
 
 if __name__ == '__main__':
     q = mp.Queue()
-    p = mp.Process(target=display_features, args=(q,))
-    p.start()
+    # p = mp.Process(target=display_features, args=(q,))
+    # p.start()
 
     model_runner = ModelRunner(q)
 
@@ -42,7 +43,7 @@ if __name__ == '__main__':
             model_runner.quit_model()
             cv2.destroyAllWindows()
             release_keys()
-            p.join()
+            # p.join()
             break
         else:
             if correcting:

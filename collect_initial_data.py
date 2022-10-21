@@ -1,5 +1,5 @@
 from time import sleep, time
-import multiprocessing as mp
+# import multiprocessing as mp
 
 import cv2
 
@@ -7,18 +7,19 @@ from common import (PAUSE_KEY, SAVE_AND_QUIT_KEY,
                     release_keys, QUIT_WITHOUT_SAVING_KEY, get_keys,
                     SAVE_AND_CONTINUE_KEY)
 
-from frame_seq_to_mh4 import correction_to_keypresses, DataCollector, display_frame
+from key_press_frames_to_multihot_4 import correction_to_keypresses
+from key_press_frames_to_multihot_4.collect_initial import DataCollector
 
 duration = 1
 sleep_duration = 0
 whole_loop_duration = 1
 
 if __name__ == '__main__':
-    q = mp.Queue()  # q.put doesn't block whereas conn.send does, so have to use a queue
-    p = mp.Process(target=display_frame, args=(q,))
-    p.start()
+    # q = mp.Queue()  # q.put doesn't block whereas conn.send does, so have to use a queue
+    # p = mp.Process(target=display_frame, args=(q,))
+    # p.start()
 
-    data_collector = DataCollector(10000, q)
+    data_collector = DataCollector(10000)
 
     paused = True
     get_keys()  # Flush key presses
@@ -46,21 +47,18 @@ if __name__ == '__main__':
         elif SAVE_AND_QUIT_KEY in keys:
             release_keys()
             data_collector.save()
-            data_collector.quit_collector()
             cv2.destroyAllWindows()
-            p.join()
+            # p.join()
             break
         elif QUIT_WITHOUT_SAVING_KEY in keys:
             print('Not saving correction data')
             release_keys()
-            data_collector.quit_collector()
             cv2.destroyAllWindows()
-            p.join()
+            # p.join()
             break
         elif data_collector.stop_session_decision():
             paused = True
             release_keys()
-            data_collector.quit_collector()
             cv2.destroyAllWindows()
 
             data_collector.print_signals()
@@ -72,7 +70,7 @@ if __name__ == '__main__':
                 print('Not saving')
                 break
 
-            p.join()
+            # p.join()
 
         if not paused:
             # print(round(1. / whole_loop_duration), duration, sleep_duration)

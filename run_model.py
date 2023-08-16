@@ -5,7 +5,7 @@ import cv2
 
 from common import PAUSE_KEY, release_keys, QUIT_WITHOUT_SAVING_KEY, get_keys, CORRECTION_KEYS
 # from key_press_frames_to_multihot_4 import correction_to_keypresses
-from key_press_frames_to_multihot_4.run import ModelRunner
+from actor_critic.run import ModelRunner
 
 whole_loop_duration = 1
 
@@ -33,7 +33,7 @@ if __name__ == '__main__':
                 paused = True
                 release_keys()
                 print('Paused')
-            model_runner.pause_model(paused)
+            model_runner.pause_or_unpause(paused)
             sleep(1)
         elif set(CORRECTION_KEYS) & set(keys):
             if not correcting and not paused:
@@ -48,6 +48,8 @@ if __name__ == '__main__':
         else:
             if correcting:
                 correcting = False
+
+        paused = model_runner.paused
 
         if not paused:
 

@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow.keras as ks
 
 from common import imshow, INPUT_WIDTH, INPUT_HEIGHT
-from collect_initial import images_fn, key_scores_fn, prev_key_states_fn, labels_fn, OUTPUT_LENGTH
+from key_press_frames_to_multihot_4.collect_initial import images_fn, key_scores_fn, prev_key_states_fn, labels_fn, OUTPUT_LENGTH
 from . import MODEL_PATH
 
 correction_images_fn = 'correction_images_uint8.npy'

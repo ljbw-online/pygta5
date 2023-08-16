@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from time import time, sleep
 from socket import socket
+from threading import Thread
 
 import numpy as np
 import tensorflow
@@ -12,7 +13,7 @@ from .collect_initial import InputCollector
 
 np.set_printoptions(precision=3, floatmode='fixed', suppress=True)  # suppress stops scientific notation
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
-tensorflow.compat.v1.enable_eager_execution()  # Necessary for .numpy() in TensorFlow 1
+# tensorflow.compat.v1.enable_eager_execution()  # Necessary for .numpy() in TensorFlow 1
 
 MODEL_PATH = os.path.join(Path.home(), 'My Drive\\Models',  format_name)
 
@@ -38,6 +39,10 @@ class ModelRunner(InputCollector):
         self.q_counter = 0
 
         self.sock = socket()
+
+        self.bot_recv_thread = Thread(target=self.bot_recv)
+        self.bot_recv_thread.start()
+        self.paused = True
 
         while True:
             try:
@@ -116,8 +121,33 @@ class ModelRunner(InputCollector):
     def quit_model(self):
         self.q.put((None, None, None, None))
         # self.sock.sendall((1).to_bytes(1, byteorder='big', signed=False))  # Send zero to ljbw_bot
-        self.sock.sendall(bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
-        self.sock.close()
+        try:
+            self.sock.sendall(bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+            self.sock.close()
+            self.sock = None
+            self.bot_recv_thread.join(0)
+        except ConnectionResetError:
+            pass
 
-    def pause_model(self, paused):
-        self.sock.sendall(bytes([paused, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+    def pause_or_unpause(self, paused):
+        try:
+            self.sock.sendall(bytes([paused, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+        except ConnectionResetError:
+            pass
+
+        self.paused = paused
+
+    def bot_recv(self):
+        while True:
+            try:
+                bot_msg = self.sock.recv(16)
+                if bot_msg[0] < 2:
+                    self.paused = bot_msg[0] == 1
+            except ConnectionRefusedError:
+                print("ConnectionRefusedError")
+                sleep(1)
+            except OSError:  # socket not connected yet
+                sleep(1)
+
+            if self.sock is None:
+                break

@@ -1,16 +1,29 @@
-from itertools import repeat
+import os
+from pathlib import Path
 from time import time, sleep
 
 import cv2
 import numpy as np
-from numpy import array_equal as ae
 import platform
 
 # How to reload a module in an interactive session:
 # import importlib
 # importlib.reload(common)
 
-# np.set_printoptions(precision=3)
+# OpenCV windows get stuck to the sides of the screen and can open off-screen after a monitor configuration change.
+# cv2.moveWindow('Figure 1', 1300, 400)
+
+# A variable that is only referenced within a function is assumed to be global, whereas a variable which is
+# assigned/modified is assumed to be local unless it is declared to be global.
+
+# https://youtrack.jetbrains.com/issue/PY-54649/OpenCV-code-completion-is-still-not-working#focus=Comments-27-6172519.0-0
+# Used workaround #2 on this link to get rid of cv2 "cannot find reference" warnings (add cv2 package dir to interpreter
+# paths for the interpreter in use).
+
+# Simplest way of getting conv output is to make model with q_val output then another model with
+# q_val and model.get_layer(index=2) outputs
+
+np.set_printoptions(precision=3, floatmode='fixed', suppress=True, sign=' ')
 
 if platform.system() == 'Windows':
     import win32gui
@@ -27,16 +40,19 @@ if platform.system() == 'Windows':
         else:
             hwin = win32gui.FindWindow(None, WINDOW_NAME)
             (left, top, right, bottom) = win32gui.GetWindowRect(hwin)
-            global window_width
-            global window_height
-            window_width = right - left
-            window_height = bottom - top
-            capture_region = (
-                int(window_width / 4), int(window_height / 4), int(window_width / 2), int(window_height / 2))
-            left = capture_region[0]  # + 3  # left and top have to be offset by these values or we get
-            top = capture_region[1]  # + 26  # pixels from outside the window. No idea why.
-            width = capture_region[2]  # Don't need to add 1 to width & height.
-            height = capture_region[3]
+            # global window_width
+            # global window_height
+            # window_width = right - left
+            # window_height = bottom - top
+            # capture_region = (
+            #     int(window_width / 4), int(window_height / 4), int(window_width / 2), int(window_height / 2))
+            # left = capture_region[0]  # + 3  # left and top have to be offset by these values or we get
+            # top = capture_region[1]  # + 26  # pixels from outside the window. No idea why.
+            # width = capture_region[2]  # Don't need to add 1 to width & height.
+            # height = capture_region[3]
+
+            width = right - left
+            height = bottom - top
 
         hwindc = win32gui.GetWindowDC(hwin)
         srcdc = win32ui.CreateDCFromHandle(hwindc)
@@ -44,7 +60,7 @@ if platform.system() == 'Windows':
         bmp = win32ui.CreateBitmap()
         bmp.CreateCompatibleBitmap(srcdc, width, height)
         memdc.SelectObject(bmp)
-        memdc.BitBlt((0, 0), (width, height), srcdc, (left, top), win32con.SRCCOPY)
+        memdc.BitBlt((0, 0), (width, height), srcdc, (0, 0), win32con.SRCCOPY)
 
         signedIntsArray = bmp.GetBitmapBits(True)
         img = np.fromstring(signedIntsArray, dtype='uint8')
@@ -57,6 +73,15 @@ if platform.system() == 'Windows':
 
         return img
 
+    # cv2.resize wants (width, height) but we store (..., height, width, ...) in a numpy array shape
+    def get_frame(width=160, height=90, grey=True):
+        frame = get_gta_window()
+
+        if grey:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2GRAY)
+
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_NEAREST)
+        return frame
 
     # source to this solution and code:
     # https://stackoverflow.com/questions/14489013/simulate-python-keypresses-for-controlling-a-game
@@ -143,7 +168,7 @@ if platform.system() == 'Windows':
 
     def get_keys():
         keys = []
-        for key in "ABCDEFGHIJKLMNOPQRSTUVWXYZ 123456789":
+        for key in "ABCDEFGHIJKLMNOPQRSTUVWXYZ 1234567890":
             if win32api.GetAsyncKeyState(ord(key)):
                 keys.append(key)
         return keys
@@ -159,7 +184,9 @@ INPUT_HEIGHT = RESIZE_HEIGHT
 MODEL_NAME = 'Taxi'
 
 # WINDOW_NAME = 'Grand Theft Auto V'
-WINDOW_NAME = 'FiveM® by Cfx.re - FXServer, but unconfigured'
+# WINDOW_NAME = 'FiveM® by Cfx.re - FXServer, but unconfigured'
+WINDOW_NAME = 'FiveM® by Cfx.re - Ljbw City'
+# WINDOW_NAME = 'FiveM® by Cfx.re - Diamonds Roleplay | Starter vehicle | Free gift | 40k starter money'
 INITIAL_DATA_FILE_NAME = 'initial_data_uint8.npy'
 CORRECTION_DATA_FILE_NAME = 'correction_data_uint8.npy'
 PAUSE_KEY = 'Z'
@@ -186,69 +213,25 @@ L = SCANCODES[3]
 DISPLAY_WIDTH = 960
 DISPLAY_HEIGHT = 540
 
+MODEL_DIR = os.path.join(Path.home(), 'My Drive\\Models')
 
-# def correction_keys_to_key_presses(keys):
-#     release_keys()
-#     if FORWARD in keys:
-#         PressKey(W)
-#
-#     if LEFT in keys:
-#         PressKey(A)
-#
-#     if BRAKE in keys:
-#         PressKey(S)
-#
-#     if RIGHT in keys:
-#         PressKey(D)
+supervised_resumed_bytes = bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+model_paused_bytes = bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+reinforcement_resumed_bytes = bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+reinforcement_paused_bytes = bytes([5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+reinforcement_model_resumed_bytes = bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+position_bytes = bytes([15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+state_bytes = bytes([23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
-
-eye9 = np.eye(9, dtype='uint8')
-w = eye9[0]
-a = eye9[1]
-s = eye9[2]
-d = eye9[3]
-wa = eye9[4]
-wd = eye9[5]
-sa = eye9[6]
-sd = eye9[7]
-nk = eye9[8]
-
-mh_w = np.array([1, 0, 0, 0], dtype='float32')
-mh_a = np.array([0, 1, 0, 0], dtype='float32')
-mh_s = np.array([0, 0, 1, 0], dtype='float32')
-mh_d = np.array([0, 0, 0, 1], dtype='float32')
-mh_wa = np.array([1, 1, 0, 0], dtype='float32')
-mh_wd = np.array([1, 0, 1, 0], dtype='float32')
-mh_sa = np.array([0, 1, 1, 0], dtype='float32')
-mh_sd = np.array([0, 0, 1, 1], dtype='float32')
-mh_nk = np.array([0, 0, 0, 0], dtype='float32')
-
-
-def oh_to_mh(array):
-    if ae(array, w):
-        return mh_w
-    elif ae(array, a):
-        return mh_a
-    elif ae(array, s):
-        return mh_s
-    elif ae(array, d):
-        return mh_d
-    elif ae(array, wa):
-        return mh_wa
-    elif ae(array, wd):
-        return mh_wd
-    elif ae(array, sa):
-        return mh_sa
-    elif ae(array, sd):
-        return mh_sd
-    elif ae(array, nk):
-        return mh_nk
-
-
-oh4_w = np.array([1, 0, 0, 0], dtype='float32')
-oh4_wa = np.array([0, 1, 0, 0], dtype='float32')
-oh4_wd = np.array([0, 0, 1, 0], dtype='float32')
-oh4_s = np.array([0, 0, 0, 1], dtype='float32')
+w_bytes = bytes([22]) + np.array([1, 0, 0, 0], dtype=np.float32).tobytes()
+wa_bytes = bytes([22]) + np.array([1, 1, 0, 0], dtype=np.float32).tobytes()
+wd_bytes = bytes([22]) + np.array([1, 0, 0, 1], dtype=np.float32).tobytes()
+s_bytes = bytes([22]) + np.array([0, 0, 1, 0], dtype=np.float32).tobytes()
+sa_bytes = bytes([22]) + np.array([0, 1, 1, 0], dtype=np.float32).tobytes()
+sd_bytes = bytes([22]) + np.array([0, 0, 1, 1], dtype=np.float32).tobytes()
+a_bytes = bytes([22]) + np.array([0, 1, 0, 0], dtype=np.float32).tobytes()
+d_bytes = bytes([22]) + np.array([0, 0, 0, 1], dtype=np.float32).tobytes()
+nk_bytes = bytes([22]) + np.array([0, 0, 0, 0], dtype=np.float32).tobytes()
 
 
 # Generic version of this function for use in experimental scripts
@@ -278,3 +261,61 @@ def imshow(data_param, width=750, height=None, frame_rate=0, title='imshow'):
             sleep(max(0, round(1/frame_rate - (time() - st))))
 
     cv2.destroyAllWindows()
+
+
+def uint8_to_float32(array):
+    return array.astype(np.float32) / 255
+
+
+def resize(im, width=None, height=None):
+    if width is not None and height is not None:
+        resize_width = width
+        resize_height = height
+    else:
+        im_width = im.shape[1]
+        im_height = im.shape[0]
+
+        if width is not None:
+            resize_width = width
+            resize_height = int(im_height * (width / im_width))
+        elif height is not None:
+            resize_height = height
+            resize_width = int(im_width * (height / im_height))
+        else:
+            raise ValueError('One of width or height has to be not None')
+
+    return cv2.resize(im, (resize_width, resize_height), interpolation=cv2.INTER_NEAREST)
+
+
+def put_text(image, text, position=(50, 50), font=cv2.FONT_HERSHEY_SIMPLEX, colour=(255, 255, 255), size=1, thickness=2):
+    cv2.putText(image, text, position, font, size, colour, thickness)
+
+class CircularBuffer:
+    def __init__(self, array):
+        self.array = array
+        self.index = 0
+        self.length = len(array)
+
+    def append(self, item):
+        if isinstance(item, zip):  # len not defined for zip
+            item = list(item)
+
+        if isinstance(item, list):
+            item_len = len(item)
+
+            if self.index + item_len > self.length:
+                first_half_elem_num = self.length - self.index
+                second_half_elem_num = item_len - first_half_elem_num
+                self.array[self.index:] = item[:first_half_elem_num]
+                self.array[:second_half_elem_num] = item[first_half_elem_num:]
+            else:
+                self.array[self.index:(self.index + item_len)] = item
+
+            self.index = (self.index + item_len) % self.length
+
+        else:
+            self.array[self.index] = item
+            self.index = (self.index + 1) % self.length
+
+    def flush(self):
+        self.array.flush()

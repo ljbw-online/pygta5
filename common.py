@@ -23,6 +23,10 @@ import platform
 # Simplest way of getting conv output is to make model with q_val output then another model with
 # q_val and model.get_layer(index=2) outputs
 
+# FOR ATARI ROMS:
+# pip install gymnasium[atari,accept-rom-license]
+# This installs autorom which allows tf-agents.environments to load Atari games.
+
 np.set_printoptions(precision=3, floatmode='fixed', suppress=True, sign=' ')
 
 if platform.system() == 'Windows':

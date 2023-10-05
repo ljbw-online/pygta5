@@ -282,7 +282,8 @@ class Env:
         forward_speed = forward_speed[0]
 
         # all_wheels_on_road = recv_bytes[5] == 4 and recv_bytes[6] == 4 and recv_bytes[7] == 4 and recv_bytes[8] == 4
-        #
+
+        # I think this is the submerged check
         # if recv_bytes[9] == 1:
         #     terminated = True
         #     reward = -1

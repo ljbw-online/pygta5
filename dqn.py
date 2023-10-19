@@ -103,13 +103,13 @@ collect_driver = py_driver.PyDriver(
 checkpoint_dir = env_name + '_checkpoint'
 best_score_filename = env_name + '_best_score'
 
-train_checkpointer = common.Checkpointer(
-    ckpt_dir=checkpoint_dir,
-    max_to_keep=1,
-    agent=agent,
-    policy=agent.policy,
-    replay_buffer=replay_buffer,
-    global_step=train_step_counter)
+#train_checkpointer = common.Checkpointer(
+#    ckpt_dir=checkpoint_dir,
+#    max_to_keep=1,
+#    agent=agent,
+#    policy=agent.policy,
+#    replay_buffer=replay_buffer,
+#    global_step=train_step_counter)
 
 policy_saver = PolicySaver(agent.policy)
 
@@ -140,7 +140,7 @@ def main():
     else:
         print('No checkpoint')
 
-    train_checkpointer.initialize_or_restore()
+    #train_checkpointer.initialize_or_restore()
 
     time_step = train_py_env.reset()
     policy_state = agent.collect_policy.get_initial_state(train_env.batch_size)
@@ -164,8 +164,8 @@ def main():
         if step % log_interval == 0:
             print('step = {0}: loss = {1}'.format(step, train_loss))
 
-        if step % (eval_interval * 10) == 0:
-            save_training_state(best_score_so_far)
+        #if step % (eval_interval * 10) == 0:
+        #    save_training_state(best_score_so_far)
 
         if step % eval_interval == 0:
             average_return = compute_avg_return(eval_py_env, agent.policy, num_episodes=num_eval_episodes)
@@ -177,7 +177,8 @@ def main():
                 break
             elif average_return > best_score_so_far:
                 best_score_so_far = average_return
-                save_training_state(best_score_so_far)
+                #save_training_state(best_score_so_far)
+                policy_saver.save(env_name)
 
 
 if __name__ == '__main__':

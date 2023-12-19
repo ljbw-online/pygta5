@@ -5,7 +5,7 @@ from multiprocessing import Process, Queue
 import numpy as np
 
 from windows import get_keys
-from pyenvs.frames_to_3action import create_q_model, Env, num_actions, model_path, data_path, \
+from environments.frames_to_3action import create_q_model, Env, num_actions, model_path, data_path, \
     target_model_path, visualise
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'

@@ -2,8 +2,8 @@ from numpy import mean
 
 from tf_agents.policies.random_tf_policy import RandomTFPolicy
 
-from evaluate_policy import compute_avg_return
-from pyenvs.secret_sequence import Env
+from evaluate_policy import compute_average_return
+from environments.secret_sequence import Env
 
 
 if __name__ == '__main__':
@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     while True:
         for _ in range(episode_increment):
-            episode_returns.append(compute_avg_return(env, policy, num_episodes=1, render=False))
+            episode_returns.append(compute_average_return(env, policy, num_episodes=1, render_env=False))
             episode_count += 1
 
         average_return = mean(episode_returns)

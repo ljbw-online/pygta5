@@ -1,184 +1,347 @@
 import os
 import pickle
-import shutil
+import queue
+from collections import deque
+from threading import Thread
 
-import reverb
+import cv2
+import numpy as np
+from tensorflow.python.training.checkpoint_management import CheckpointManager
+from matplotlib import pyplot
+
+from common import model_dir, data_dir, checkpoint_dir
+from q_networks import dueling_architecture as get_q_net
+from environments.breakout import Env, gamma, epsilon_max, max_steps_per_episode
+from plot import Plot
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 import tensorflow as tf
+from tensorflow.python.training.tracking.util import Checkpoint
+import keras
 
-from tf_agents.agents.dqn import dqn_agent
-from tf_agents.drivers import py_driver
-from tf_agents.environments import TFPyEnvironment
-from tf_agents.policies import PolicySaver, PyTFEagerPolicy
-from tf_agents.replay_buffers import reverb_replay_buffer
-from tf_agents.replay_buffers import reverb_utils
-from tf_agents.specs import tensor_spec
-from tf_agents.utils import common
+# gamma = 0.99
+# epsilon_max = 1.0
+epsilon_min = 0.1
+epsilon_range = epsilon_max - epsilon_min
+epsilon_interval = 1_000_000
+batch_size = 32
+steps_per_model_update = 4
+steps_per_target_update = 10_000
+max_replay_buffer_length = 250_000
+episodes_per_evaluation = 100
+loss_function = keras.losses.Huber()
+optimizer = keras.optimizers.Adam(learning_rate=2.5e-4, clipnorm=1.0)
+gameover_penalty = np.float32(-1.0)
 
-from evaluate_policy import compute_avg_return
-from pyenvs.breakout import Env, env_name, gamma, max_return
+rng = np.random.default_rng()
 
-collect_steps_per_iteration = 4
-replay_buffer_max_length = 1_000_000
+env = Env()
 
-batch_size = 64
-learning_rate = 2.5e-4
-log_interval = 10_000
-eval_interval = 10 * log_interval
-num_eval_episodes = 40
+model_path = os.path.join(model_dir, env.name)
+target_model_path = os.path.join(model_dir, env.name + '_target')
+best_model_path = os.path.join(model_dir, env.name + '_best')
+replay_buffer_path = os.path.join(data_dir, env.name + '_replay_buffer')
+training_state_path = os.path.join(data_dir, env.name + '_training_state')
+checkpoint_dir = os.path.join(checkpoint_dir, env.name)
 
-train_py_env = Env()
-train_env = TFPyEnvironment(train_py_env)
-eval_py_env = Env()
+checkpoint = Checkpoint(optimizer=optimizer)
+checkpoint_manager = CheckpointManager(checkpoint, checkpoint_dir, 1)
 
-optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, clipnorm=1.0)
+observation_window_title = 'Observation'
+episode_q_predictions = []
+episode_prediction_step_counts = []
+episode_rewards = []
 
-# If the qnet consumes a sequence of N frames then this needs to be N + 1 for Deep Q-learning.
-observation_sequence_length = 2
-
-q_net = train_py_env.create_q_net(recurrent=False)
-
-train_step_counter = tf.Variable(0)
-
-# As far as I can tell from the code, this agent does not gradually reduce the value of epsilon. This means that if
-# epsilon_greedy starts off at 1.0 then the exploration will remain completely random.
-agent = dqn_agent.DqnAgent(
-    train_env.time_step_spec(),
-    train_env.action_spec(),
-    q_network=q_net,
-    optimizer=optimizer,
-    td_errors_loss_fn=common.element_wise_huber_loss,
-    train_step_counter=train_step_counter,
-    target_update_period=10_000,
-    gamma=gamma,
-    epsilon_greedy=1.0,
-)
-
-# (Optional) Optimize by wrapping some of the code in a graph using TF function.
-agent.train = common.function(agent.train)
-agent.train_step_counter.assign(0)
-agent.initialize()
-
-# agent.collect_data_spec just specifies action, observation etc. It doesn't mention sequence length.
-table_name = 'uniform_table'
-replay_buffer_signature = tensor_spec.from_spec(agent.collect_data_spec)
-replay_buffer_signature = tensor_spec.add_outer_dim(replay_buffer_signature)
-
-# Reverb initialisation ---
-table = reverb.Table(
-    table_name,
-    max_size=replay_buffer_max_length,
-    sampler=reverb.selectors.Uniform(),
-    remover=reverb.selectors.Fifo(),
-    rate_limiter=reverb.rate_limiters.MinSize(1),
-    signature=replay_buffer_signature)
-
-reverb_server = reverb.Server([table])
-
-replay_buffer = reverb_replay_buffer.ReverbReplayBuffer(
-    agent.collect_data_spec,
-    table_name=table_name,
-    sequence_length=observation_sequence_length,
-    local_server=reverb_server)
-
-dataset = replay_buffer.as_dataset(
-    num_parallel_calls=32,  # must be <= cycle_length which is 32
-    sample_batch_size=batch_size,
-    num_steps=observation_sequence_length).prefetch(batch_size)
-
-dataset_iterator = iter(dataset)
-# ---
-
-# An observer is a callable that takes an observation and adds it to the replay buffer.
-rb_observer = reverb_utils.ReverbAddTrajectoryObserver(
-    replay_buffer.py_client,
-    table_name,
-    sequence_length=observation_sequence_length)
-
-collect_driver = py_driver.PyDriver(
-    train_py_env,
-    PyTFEagerPolicy(agent.collect_policy, use_tf_function=True),
-    [rb_observer],
-    max_steps=collect_steps_per_iteration)
-
-checkpoint_dir = env_name + '_checkpoint'
-best_score_filename = env_name + '_best_score'
-
-#train_checkpointer = common.Checkpointer(
-#    ckpt_dir=checkpoint_dir,
-#    max_to_keep=1,
-#    agent=agent,
-#    policy=agent.policy,
-#    replay_buffer=replay_buffer,
-#    global_step=train_step_counter)
-
-policy_saver = PolicySaver(agent.policy)
+labels = ['W', 'no-keys', 'S', 'WA', 'WD']
 
 
-def save_training_state(best_score_so_far):
-    print('Saving policy and checkpoint')
-    policy_saver.save(env_name)
-    train_checkpointer.save(train_step_counter)
-    with open(best_score_filename, 'wb') as best_score_file:
-        pickle.dump(best_score_so_far, best_score_file)
+def compute_average_return(environment, model, num_episodes=10, single_step=False, render_env=False, render_obs=False):
+    total_return = 0.0
+
+    if single_step:
+        wait_key_duration = 0
+    else:
+        wait_key_duration = 1
+
+    # When we lose a life in Breakout we need to press action 1 to start the next life. Often the agent doesn't choose
+    # action 1 in response to the lost-life screen and hence gets indefinitely stuck. To work around this, if the env
+    # has a random_eval_action we inject it with a low probability.
+    try:
+        random_eval_action = environment.random_eval_action
+    except AttributeError:
+        random_eval_action = None
+
+    for _ in range(num_episodes):
+        observation = environment.reset()
+        terminated = False
+        episode_return = 0.0
+
+        for _ in range(max_steps_per_episode):
+            if terminated:
+                break
+
+            if render_obs:
+                cv2.imshow(observation_window_title, np.hstack(np.split(observation, 4, axis=2)))
+                cv2.waitKey(1)
+
+            if single_step or render_env:
+                key = environment.render()
+                # if key == ord('q'):
+                #     env.close()
+                #     return
+
+            # if cv2.waitKey(wait_key_duration) == ord('q'):
+            #     cv2.destroyAllWindows()
+            #     return None
+
+            q_predictions = model(tf.convert_to_tensor(np.expand_dims(observation, axis=0)), training=False)
+            action = tf.argmax(q_predictions[0]).numpy()
+
+            if random_eval_action is not None:
+                if rng.random() < 0.05:
+                    action = rng.choice(environment.num_actions)
+
+            observation, reward, terminated = environment.step(action)
+
+            if not terminated:
+                episode_return += reward
+
+        if single_step:
+            print(f'Episode return: {episode_return}')
+
+        total_return += episode_return
+
+    avg_return_local = total_return / num_episodes
+    return avg_return_local
+
+
+input_string = ''
+
+
+def get_input():
+    global input_string
+    while True:
+        input_string = input()
+        if input_string == 'quit' or input_string == 'save_and_quit':
+            break
+
+
+def discounted_reward_sums(gamma, rewards):
+    rewards_len = len(rewards)
+    sum_val = 0
+    sums = np.zeros_like(rewards)
+
+    for i in range(rewards_len - 1, -1, -1):
+        sums[i] = rewards[i] + gamma * sum_val
+        sum_val = sums[i]
+
+    return sums
+
+
+class TrainingState:
+    def __init__(self):
+        self.step_count = 0
+        self.best_eval_return = 0
+        self.episode_count = 0
+        self.episode_returns = deque(maxlen=100)
 
 
 def main():
-    best_score_so_far = 0
-    if os.path.isdir(checkpoint_dir):
-        choice = input(f'Delete {env_name} checkpoint and policy? (y/N)')
+    global input_string
+    thread = Thread(target=get_input)
 
-        if choice == 'y':
-            try:
-                # rmtree is equivalent to rm -rf. The directory names being passed to it better be correct!
-                shutil.rmtree(checkpoint_dir)
-                shutil.rmtree(env_name)
-            except FileNotFoundError:
-                pass
-        else:
-            with open(best_score_filename, 'rb') as best_score_file:
-                best_score_so_far = pickle.load(best_score_file)
+    plot = Plot()
+    plot.title = 'Q-values'
+    plot.xlabel = 'Step count'
+    plot.width = 13
+    plot.top = 1.2
+    plot.bottom = gameover_penalty - 0.1
+
+    choice = 'n'
+    if os.path.isfile(replay_buffer_path):
+        choice = input('Restore from disc? (y/N)')
+
+    if choice == 'y':
+        model = keras.models.load_model(model_path)
+        target_model = keras.models.load_model(target_model_path)
+
+        checkpoint.restore(checkpoint_manager.latest_checkpoint)
+
+        with open(replay_buffer_path, 'rb') as data_file:
+            replay_buffer = pickle.load(data_file)
+
+        with open(training_state_path, 'rb') as training_state_file:
+            ts = pickle.load(training_state_file)
     else:
-        print('No checkpoint')
+        # model = env.create_q_net()
+        # target_model = env.create_q_net()
+        model = get_q_net(env.input_shape, env.num_actions)
+        target_model = get_q_net(env.input_shape, env.num_actions)
 
-    #train_checkpointer.initialize_or_restore()
+        replay_buffer = deque(maxlen=max_replay_buffer_length)
+        ts = TrainingState()
 
-    time_step = train_py_env.reset()
-    policy_state = agent.collect_policy.get_initial_state(train_env.batch_size)
+    thread.start()
 
-    # Put one batch of observations into the replay buffer.
+    # Stops a warning when saving
+    model.compile()
+    target_model.compile()
+
+    print(f'len(replay_buffer): {len(replay_buffer)}')
+
+    def save_training_state():
+        print('Saving models, optimiser, replay buffer and training state.')
+        model.save(model_path)
+        target_model.save(target_model_path)
+
+        checkpoint_manager.save()
+
+        with open(replay_buffer_path, 'wb') as data_file:
+            pickle.dump(replay_buffer, data_file)
+
+        with open(training_state_path, 'wb') as training_state_file:
+            pickle.dump(ts, training_state_file)
+
+        print('Saved.')
+
+    terminated = False
+    observation = env.reset()
+
+    # Put a batch of timesteps into the replay buffer. The +1 is because we always need an observation_next.
     for _ in range(batch_size + 1):
-        collect_driver.run(time_step, policy_state=policy_state)
+        if terminated:
+            observation = env.reset()
+
+        action = rng.choice(env.num_actions)
+        observation_next, reward, terminated = env.step(action)
+        replay_buffer.append(np.array((observation, action, reward), dtype=env.timestep_dtype))
+        observation = observation_next
 
     while True:
-        time_step, _ = collect_driver.run(time_step, policy_state=policy_state)
+        if input_string == 'quit':
+            env.close()
+            cv2.destroyAllWindows()
+            thread.join()
+            break
+        elif input_string == 'save_and_quit':
+            save_training_state()
+            env.close()
+            cv2.destroyAllWindows()
+            thread.join()
+            break
+        elif input_string == 'save':
+            save_training_state()
+            input_string = ''
 
-        experience, unused_info = next(dataset_iterator)
+        observation = env.reset()
+        episode_return = 0
+        episode_step_count = 0
+        episode_q_predictions.clear()
+        episode_prediction_step_counts.clear()
+        episode_rewards.clear()
 
-        # It looks like for a stack len of e.g. 3 frames, we need experience.observation to have shape [Bx4x...].
-        # This gets turned into a batch of Transitions where each step.observation is the first three frames and each
-        # next_step.observation is the last three frames.
-        train_loss = agent.train(experience).loss
-
-        step = int(agent.train_step_counter)
-
-        if step % log_interval == 0:
-            print('step = {0}: loss = {1}'.format(step, train_loss))
-
-        #if step % (eval_interval * 10) == 0:
-        #    save_training_state(best_score_so_far)
-
-        if step % eval_interval == 0:
-            average_return = compute_avg_return(eval_py_env, agent.policy, num_episodes=num_eval_episodes)
-            print(f'Average return over {num_eval_episodes} episodes: {average_return}')
-
-            if average_return == max_return:
-                print('Max return achieved. Saving policy and exiting.')
-                policy_saver.save(env_name)
+        for _ in range(max_steps_per_episode):
+            if input_string == 'quit':
                 break
-            elif average_return > best_score_so_far:
-                best_score_so_far = average_return
-                #save_training_state(best_score_so_far)
-                policy_saver.save(env_name)
+
+            if terminated:
+                terminated = False
+                break
+
+            ts.step_count += 1
+            episode_step_count += 1
+
+            # env.render()
+            # cv2.imshow(observation_window_title, np.hstack(np.split(observation, 4, axis=2)))
+            # cv2.waitKey(1)
+
+            if rng.random() < max(epsilon_min, epsilon_max - epsilon_range * (ts.step_count / epsilon_interval)):
+                action = rng.choice(env.num_actions)
+            else:
+                model_input = np.expand_dims(observation, axis=0)
+                model_input = tf.convert_to_tensor(model_input)
+                q_predictions = model(model_input, training=False)[0]
+                action = tf.argmax(q_predictions).numpy()
+                episode_q_predictions.append(q_predictions.numpy())
+                episode_prediction_step_counts.append(episode_step_count)
+
+            observation_next, reward, terminated = env.step(action)
+
+            episode_return += reward
+
+            if terminated:
+                reward = gameover_penalty
+
+            episode_rewards.append(reward)
+
+            # A timestep consists of an observation, the action we took in response to it, and the reward we got on
+            # the next step.
+            replay_buffer.append(np.array((observation, action, reward), dtype=env.timestep_dtype))
+
+            observation = observation_next
+
+            # Update every fourth frame
+            if ts.step_count % steps_per_model_update == 0:
+                # The -1 is because we get replay_buffer[i + 1] below
+                indices = rng.choice(range(len(replay_buffer) - 1), size=batch_size)
+
+                observation_sample = np.array([replay_buffer[i]['observation'] for i in indices])
+                observation_next_sample = np.array([replay_buffer[i + 1]['observation'] for i in indices])
+                action_sample = [replay_buffer[i]['action'] for i in indices]
+                reward_sample = [replay_buffer[i]['reward'] for i in indices]
+
+                future_actions = tf.argmax(model.predict(observation_next_sample, verbose=0), axis=1)
+                future_onehot_actions = tf.one_hot(future_actions, env.num_actions)
+
+                future_value_estimates = target_model.predict(observation_next_sample, verbose=0)
+                future_action_values = tf.reduce_sum(tf.multiply(future_value_estimates, future_onehot_actions), axis=1)
+
+                updated_q_values = reward_sample + gamma * future_action_values
+
+                onehot_actions = tf.one_hot(action_sample, env.num_actions)
+
+                with tf.GradientTape() as tape:
+                    q_values = model(observation_sample)
+                    q_action = tf.reduce_sum(tf.multiply(q_values, onehot_actions), axis=1)
+                    loss = loss_function(updated_q_values, q_action)
+
+                grads = tape.gradient(loss, model.trainable_variables)
+                # Had to downgrade to tensorflow 2.10 to stop warnings about function retracing from apply_gradients
+                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+
+            if ts.step_count % steps_per_target_update == 0:
+                target_model.set_weights(model.get_weights())
+
+            if ts.step_count % max_replay_buffer_length == 0:
+                save_training_state()
+
+        ts.episode_count += 1
+        ts.episode_returns.append(episode_return)
+
+        plot.clear()
+        plot.add_line(range(len(episode_rewards)), discounted_reward_sums(gamma, episode_rewards),
+                      label='discounted reward')
+
+        for label, action_values in zip(labels, np.transpose(episode_q_predictions)):
+            plot.add_line(episode_prediction_step_counts, action_values, label=label)
+
+        cv2.imshow('Q-values', plot.to_array())
+        cv2.waitKey(1)
+
+        if ts.episode_count % 1 == 0:
+            print(f'step_count: {ts.step_count}, loss: {loss}, '
+                  f'average return: {np.mean(ts.episode_returns)}')
+
+        if ts.episode_count % episodes_per_evaluation == 0:
+            eval_return = compute_average_return(env, model, num_episodes=10, render_env=False, render_obs=False)
+            print(f'eval_return: {eval_return}')
+            if eval_return > ts.best_eval_return:
+                ts.best_eval_return = eval_return
+
+                save_training_state()
+
+                print("Saving best model.")
+                model.save(best_model_path)
 
 
 if __name__ == '__main__':

@@ -81,6 +81,8 @@ class Env(PyEnvironment):
         if action_delay < 0:
             raise ValueError('Minimum action_delay value is 0')
 
+        self.name = env_name
+        self.max_return = max_return
         self._discount = np.float32(discount)
         self.observation_sequence_length = action_delay + 3
         self.eval_mode = eval_mode

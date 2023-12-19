@@ -47,7 +47,9 @@ RIGHT = CORRECTION_KEYS[3]
 DISPLAY_WIDTH = 960
 DISPLAY_HEIGHT = 540
 
-MODEL_DIR = os.path.join(Path.home(), 'My Drive\\Models')
+model_dir = os.path.join(Path.home(), 'var', 'Models')
+data_dir = os.path.join(Path.home(), 'var', 'Data')
+checkpoint_dir = os.path.join(Path.home(), 'var', 'Checkpoints')
 
 
 # Generic version of this function for use in experimental scripts

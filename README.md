@@ -1,15 +1,13 @@
-# pygta5
-This project has the long term goal of applying reinforcement learning to the task of GTA V driving. The agent will be 
-rewarded for staying on the road and avoiding collisions as much as possible.
+This project has the long term goal of applying reinforcement learning to the task of GTA V driving. The current reward 
+function could be expressed as "distance gained since previous time-step". In the future the agent will be incentivised 
+to stay on the road and avoid collisions. 
 
-## Current Approach
-The main file is dqn.py. In this file I am trying to use the DQN agent from TF-Agents to solve Breakout with Deep 
-Q-Learning. Once I have verified that my script can solve Breakout I will move back to GTA and use that as the 
-environment. I have made a FiveM mod which allows me to send actions to GTA via a socket. I run the game on a 
+The main file is dqn.py which features a double deep Q-learning algorithm with a dueling-architecture model. A 
+single-stream (i.e. non-dueling) model exceeds random performance in Atari Breakout after less than 24 hours of 
+training with this script. This is not true for the dueling-architecture model so there must be problems with my 
+implementation so far.
+
+I have made a FiveM mod which allows me to send actions to GTA via a socket. I run the game on a 
 separate Windows PC and get the image from the game window with a capture card.
-
-Despite much experimentation and inspection of the TF-Agents code, I have so far never seen the DQN agent exceed the 
-performance of a random policy on Breakout. If you have successfully used TF-Agents to solve a non-trivial environment 
-please contact me and let me know how you did it.
 
 Thanks to Sentdex for his initial work on this.

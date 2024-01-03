@@ -1,13 +1,10 @@
 import os
 import pickle
-import queue
 from collections import deque
 from threading import Thread
 
 import cv2
 import numpy as np
-from tensorflow.python.training.checkpoint_management import CheckpointManager
-from matplotlib import pyplot
 
 from common import model_dir, data_dir, checkpoint_dir
 from q_networks import dueling_architecture as get_q_net
@@ -16,11 +13,13 @@ from plot import Plot
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 import tensorflow as tf
-from tensorflow.python.training.tracking.util import Checkpoint
 import keras
+from tensorflow.python.training.checkpoint_management import CheckpointManager
+from tensorflow.python.training.tracking.util import Checkpoint
 
-# gamma = 0.99
-# epsilon_max = 1.0
+# TensorFlow versions newer than 2.9 seem to have a memory leak somewhere in the model training code, e.g. model.fit
+# or optimizer.apply_gradients
+
 epsilon_min = 0.1
 epsilon_range = epsilon_max - epsilon_min
 epsilon_interval = 1_000_000
@@ -30,7 +29,7 @@ steps_per_target_update = 10_000
 max_replay_buffer_length = 250_000
 episodes_per_evaluation = 100
 loss_function = keras.losses.Huber()
-optimizer = keras.optimizers.Adam(learning_rate=2.5e-4, clipnorm=1.0)
+optimizer = keras.optimizers.Adam(learning_rate=1e-5, clipnorm=1.0)
 gameover_penalty = np.float32(-1.0)
 
 rng = np.random.default_rng()
@@ -153,7 +152,7 @@ def main():
     plot = Plot()
     plot.title = 'Q-values'
     plot.xlabel = 'Step count'
-    plot.width = 13
+    plot.width = 12
     plot.top = 1.2
     plot.bottom = gameover_penalty - 0.1
 
@@ -173,8 +172,6 @@ def main():
         with open(training_state_path, 'rb') as training_state_file:
             ts = pickle.load(training_state_file)
     else:
-        # model = env.create_q_net()
-        # target_model = env.create_q_net()
         model = get_q_net(env.input_shape, env.num_actions)
         target_model = get_q_net(env.input_shape, env.num_actions)
 
@@ -306,7 +303,6 @@ def main():
                     loss = loss_function(updated_q_values, q_action)
 
                 grads = tape.gradient(loss, model.trainable_variables)
-                # Had to downgrade to tensorflow 2.10 to stop warnings about function retracing from apply_gradients
                 optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
             if ts.step_count % steps_per_target_update == 0:

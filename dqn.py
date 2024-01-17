@@ -153,8 +153,8 @@ def main():
     plot.title = 'Q-values'
     plot.xlabel = 'Step count'
     plot.width = 12
-    plot.top = 1.2
-    plot.bottom = gameover_penalty - 0.1
+    plot.top = 1.4
+    plot.bottom = -0.6
 
     choice = 'n'
     if os.path.isfile(replay_buffer_path):

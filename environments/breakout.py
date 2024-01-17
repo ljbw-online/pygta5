@@ -14,7 +14,8 @@ from common import resize
 # Dueling Architecture Double Deep Q-Learning with one fully connected layer was getting 8 points on average after
 # 4.7 million iterations
 # Dueling Architecture Double Deep Q-Learning with two 512-unit fully connected layers had regressed down to 6.5 points
-# on average after 4.4 million iterations.
+# on average after 4.4 million iterations. By 30 million iterations it had not recovered.
+# Same config as above, but with a learning rate of 1e-5, was scoring 10.1 points after 6.9 million iterations.
 
 gamma = 0.99
 epsilon_max = 1.0

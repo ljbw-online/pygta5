@@ -3,8 +3,8 @@ from collections import deque
 import cv2
 import numpy as np
 import gymnasium as gym
-import keras
-from keras import layers
+# import keras
+# from keras import layers
 
 from common import resize
 
@@ -15,29 +15,41 @@ from common import resize
 # 4.7 million iterations
 # Dueling Architecture Double Deep Q-Learning with two 512-unit fully connected layers had regressed down to 6.5 points
 # on average after 4.4 million iterations. By 30 million iterations it had not recovered.
-# Same config as above, but with a learning rate of 1e-5, was scoring 10.1 points after 6.9 million iterations.
+# Same config as above, but with a learning rate of 1e-5, was scoring 10.1 points after 6.9 million iterations. It
+# achieved a maximum average score of about 47 points after almost 50 million iterations. I stopped the training run
+# because it was really struggling to keep the average score in the high 40s.
+# Same as above, but with a replay buffer of 1000 episodes, was scoring 5 points after 4.5m iterations. Got a evaluation
+# score of 22.5 after 10m iterations.
 
+env_name = 'breakout'
 gamma = 0.99
 epsilon_max = 1.0
-max_steps_per_episode = 100_000
+# max_steps_per_episode = 100_000
+action_labels = ['nothing', 'start', '-->', '<--']
 
 
 class Env:
-    def __init__(self, stack=True, clip_rewards=True):
-        self.name = 'Breakout'
+    def __init__(self):
+        self.name = env_name
         self.random_eval_action = 1
         self.max_return = None
         self.env = gym.make('BreakoutNoFrameskip-v4')
         self.num_actions = 4
-        self.input_shape = (84, 84, 4)
+        self.max_steps_per_episode = 100_000
+        self.evaluation_epsilon = 0.05
 
-        self.timestep_dtype = np.dtype(
-            [('observation', np.uint8, (84, 84, 4)), ('action', np.int32), ('reward', np.float32)])
-        self.clip_rewards = clip_rewards
+        # if stack:
+        #     input_channels = 4
+        # else:
+        #     input_channels = 1
 
-        self.stack = stack
-        if stack:
-            self.frame_deque = deque(maxlen=4)
+        self.timestep_dtype = np.dtype([('observation', np.uint8, (84, 84)), ('action', np.int32),
+                                        ('reward', np.float32)])
+        # self.clip_rewards = clip_rewards
+
+        # self.stack = stack
+        # if stack:
+        #     self.frame_deque = deque(maxlen=4)
 
         self.current_human_frame = None
 
@@ -46,18 +58,18 @@ class Env:
 
         self.current_human_frame = frame
 
-        frame = resize(frame, height=84, width=84)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = np.expand_dims(frame, axis=-1)
-
-        if self.stack:
-            for _ in range(3):
-                self.frame_deque.append(np.zeros((84, 84, 1), dtype=np.uint8))
-
-            self.frame_deque.append(frame)
-            observation = np.concatenate(self.frame_deque, axis=2)
-        else:
-            observation = frame
+        # if self.stack:
+        #     frame = resize(frame, height=84, width=84)
+        #     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        #     frame = np.expand_dims(frame, axis=-1)
+        #
+        #     for _ in range(3):
+        #         self.frame_deque.append(np.zeros((84, 84, 1), dtype=np.uint8))
+        #
+        #     self.frame_deque.append(frame)
+        #     observation = np.concatenate(self.frame_deque, axis=2)
+        # else:
+        observation = frame
 
         return observation
 
@@ -66,39 +78,38 @@ class Env:
 
         self.current_human_frame = frame
 
-        frame = resize(frame, height=84, width=84)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = np.expand_dims(frame, axis=-1)
+        # if self.stack:
+        #     frame = resize(frame, height=84, width=84)
+        #     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        #     frame = np.expand_dims(frame, axis=-1)
+        #     self.frame_deque.append(frame)
+        #     observation = np.concatenate(self.frame_deque, axis=2)
+        # else:
+        observation = frame
 
-        if self.stack:
-            self.frame_deque.append(frame)
-            observation = np.concatenate(self.frame_deque, axis=2)
-        else:
-            observation = frame
-
-        if self.clip_rewards:
-            reward = min(reward, 1.0)
-            reward = np.float32(reward)
+        # if self.clip_rewards:
+        #     reward = min(reward, 1.0)
+        #     reward = np.float32(reward)
 
         # if terminated:
         #     reward = np.float32(-1)
 
         return observation, reward, terminated
 
-    def create_q_net(self):
-        inputs = layers.Input(shape=(84, 84, 4))
-        rescaling = layers.Rescaling(1. / 255)(inputs)
-
-        conv1 = layers.Conv2D(32, 8, strides=4, activation='relu')(rescaling)
-        conv2 = layers.Conv2D(64, 4, strides=2, activation='relu')(conv1)
-        conv3 = layers.Conv2D(64, 3, strides=1, activation='relu')(conv2)
-
-        flatten = layers.Flatten()(conv3)
-
-        dense = layers.Dense(512, activation='relu')(flatten)
-        q_values = layers.Dense(self.num_actions, activation='linear')(dense)
-
-        return keras.Model(inputs=inputs, outputs=q_values)
+    # def create_q_net(self):
+    #     inputs = layers.Input(shape=(84, 84, 4))
+    #     rescaling = layers.Rescaling(1. / 255)(inputs)
+    #
+    #     conv1 = layers.Conv2D(32, 8, strides=4, activation='relu')(rescaling)
+    #     conv2 = layers.Conv2D(64, 4, strides=2, activation='relu')(conv1)
+    #     conv3 = layers.Conv2D(64, 3, strides=1, activation='relu')(conv2)
+    #
+    #     flatten = layers.Flatten()(conv3)
+    #
+    #     dense = layers.Dense(512, activation='relu')(flatten)
+    #     q_values = layers.Dense(self.num_actions, activation='linear')(dense)
+    #
+    #     return keras.Model(inputs=inputs, outputs=q_values)
 
     def close(self):
         cv2.destroyAllWindows()
@@ -122,37 +133,39 @@ class Env:
 def test_env():
     env = Env()
     action = 0
-    reward = 0.0
+    key_ord = 0
     terminated = False
     observation = env.reset()
-    while True:
+    while key_ord != ord('q'):
         if terminated:
             observation = env.reset()
-            reward = 0.0
 
         env.render(mode='human')
-        print(reward)
+
+        cv2.imshow('Observation', observation)
+        key_ord = cv2.waitKey(0)
 
         if observation.shape[2] > 3:
             observation = np.hstack(np.split(observation, 4, axis=2))
 
-        cv2.imshow('Observation', observation)
-        key = cv2.waitKey(0)
-
-        if key == ord('q'):
-            cv2.destroyAllWindows()
-            env.close()
-            break
-        elif key == ord('j'):
+        if key_ord == ord('j'):
             action = 3
-        elif key == ord('k'):
+        elif key_ord == ord('k'):
             action = 0
-        elif key == ord('l'):
+        elif key_ord == ord('l'):
             action = 2
-        elif key == ord('i'):
+        elif key_ord == ord('i'):
             action = 1
 
-        observation, reward, terminated = env.step(action)
+        observation_next, reward, terminated = env.step(action)
+
+        # A reward of 1.0 is given with the first observation in which a brick has disappeared.
+        print(reward)
+
+        observation = observation_next
+
+    env.close()
+    cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':

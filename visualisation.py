@@ -2,7 +2,7 @@ import tensorflow as tf
 from tf_agents.environments import TFPyEnvironment
 
 from dqn import Env, env_name, max_return
-from evaluate_policy import compute_average_return
+from evaluate_policy import average_return
 
 # Code for visualising the agent's gameplay in a subprocess
 
@@ -23,7 +23,7 @@ def visualise(input_queue, output_queue):
     while True:
         try:
             print('computing average')
-            average_return = compute_average_return(eval_py_env, visualise_policy, num_episodes=num_episodes)
+            average_return = average_return(eval_py_env, visualise_policy, num_episodes=num_episodes)
 
             print(f'Average return over {num_episodes} episodes: {average_return}')
 

@@ -1,6 +1,11 @@
+from collections import deque
+
+import cv2
 import numpy as np
 from keras import layers, Model
 import tensorflow as tf
+
+from common import resize
 
 
 def fully_connected(input_shape, num_actions):
@@ -30,6 +35,11 @@ def rescale_conv_dense(input_shape, num_actions):
 
 def dueling_architecture(input_shape, num_actions, testing=False):
     inputs = layers.Input(shape=input_shape)
+
+    # if input_shape[0] < 64:
+    #     resizing = layers.Resizing(64, 64)(inputs)
+    #     rescaling = layers.Rescaling(1. / 255)(resizing)
+    # else:
     rescaling = layers.Rescaling(1. / 255)(inputs)
 
     conv1 = layers.Conv2D(32, 8, strides=4, activation='relu')(rescaling)
@@ -58,9 +68,115 @@ def dueling_architecture(input_shape, num_actions, testing=False):
     action_values = layers.Add()([repeated_difference, advantages])
 
     if testing:
-        return Model(inputs=inputs, outputs=[value, advantages, action_values])
+        outputs = [value, advantages, action_values]
     else:
-        return Model(inputs=inputs, outputs=action_values)
+        outputs = action_values
+
+    return Model(inputs=inputs, outputs=outputs)
+
+
+def downsample_observation(observation):
+    if observation.shape[0] > 84:
+        observation = resize(observation, width=84, height=84)
+
+    try:
+        if observation.shape[2] == 3:
+            return cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
+    except IndexError:
+        pass
+
+    return observation
+
+
+class QFunction:
+    def __init__(self, obs_seq_len, env, model):
+        self.obs_seq_len = obs_seq_len
+        self.num_actions = env.num_actions
+        self.obs_shape = env.timestep_dtype['observation'].shape
+        self.obs_dtype = env.timestep_dtype['observation'].subdtype[0]
+        self.obs_deque = deque(maxlen=obs_seq_len)
+        self.model = model
+        self.downsampler = downsample_observation
+        self.obs_stored = 0
+        self.clear()
+
+    def __call__(self, obs):
+        downsampled_obs = self.downsampler(obs)
+        obs = np.expand_dims(downsampled_obs, 2)
+        self.obs_deque.append(obs)
+        self.obs_stored = min(self.obs_stored + 1, self.obs_seq_len)
+        model_input = np.concatenate(self.obs_deque, axis=2)
+        model_input = np.expand_dims(model_input, axis=0)  # add batch dimension
+        model_input = tf.convert_to_tensor(model_input)
+
+        if self.obs_stored < self.obs_seq_len:
+            q_values = tf.zeros((self.num_actions,), dtype=tf.float32)
+        else:
+            q_values = self.model(model_input, training=False)[0]
+
+        return q_values, downsampled_obs
+
+    def clear(self):
+        # for _ in range(self.obs_seq_len - 1):
+        #    self.obs_deque.append(np.zeros(self.obs_shape + (1,), dtype=self.obs_dtype))
+        self.obs_deque.clear()
+        self.obs_stored = 0
+
+
+def test_q_function():
+    import os
+
+    import cv2
+
+    from common import base_dir
+    from environments.numbers_env import Env, env_name
+    from dqn import run_episode
+    from replay_buffer import ReplayBuffer
+
+    env = Env(sparsity=4, num_actions=4)
+
+    save_dir = os.path.join(base_dir, env_name)
+    replay_buffer_dir = os.path.join(save_dir, 'replay_buffer')
+
+    try:
+        os.makedirs(replay_buffer_dir)
+    except FileExistsError:
+        pass
+
+    obs_seq_len = 4
+    rb = ReplayBuffer(replay_buffer_dir, env, obs_seq_len=obs_seq_len)
+
+    def placeholder_model(observation, training=False):
+        return observation
+
+    qf = QFunction(obs_seq_len, env, placeholder_model)
+
+    episode, terminated, _, _ = run_episode(env, qf, 1.0)
+
+    if terminated:
+        episode['reward'][-1] = -1
+
+    rb.add_episode(episode)
+
+    for i in range(len(episode) - obs_seq_len):
+        qf(episode['observation'][i])
+        qf(episode['observation'][i + 1])
+        qf(episode['observation'][i + 2])
+        frame_stack, _ = qf(episode['observation'][i + 3])
+
+        frame_stack = frame_stack.numpy()
+        axis_moved = np.moveaxis(episode['observation'][i:i+4], 0, -1)
+
+        assert np.array_equal(frame_stack, axis_moved)
+
+        fs_h = np.hstack((frame_stack[:, :, 0], frame_stack[:, :, 1], frame_stack[:, :, 2], frame_stack[:, :, 3]))
+        am_h = np.hstack((axis_moved[:, :, 0], axis_moved[:, :, 1], axis_moved[:, :, 2], axis_moved[:, :, 3]))
+
+        cv2.imshow('mn_conc', fs_h)
+        cv2.imshow('ma_conc', am_h)
+        cv2.waitKey(0)
+
+    cv2.destroyAllWindows()
 
 
 def test_dueling_architecture():
@@ -92,4 +208,4 @@ def test_dueling_architecture():
 
 
 if __name__ == '__main__':
-    test_dueling_architecture()
+    test_q_function()

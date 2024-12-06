@@ -8,10 +8,14 @@ import keras
 import numpy as np
 from keras import layers
 
+# Fails when this script is run directly. Apparently directly running a script which is in a package is 
+# an antipattern. Use python -m environments.gta or run evaluate_environment.py.
 from common import resize
 
+env_name = 'GTA'
+
 gamma = 0.99
-epsilon_max = 0.25
+epsilon_max = 1.0
 max_steps_per_episode = 1_000
 
 supervised_resumed_bytes = bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -35,10 +39,14 @@ nk_bytes = bytes([22]) + np.array([0, 0, 0, 0], dtype=np.float32).tobytes()
 
 starting_position = np.array([1099, -265, 69], dtype=np.float32)
 teleport_bytes = bytes([19, 0, 0, 0]) + starting_position.tobytes() + bytes([0])
+# teleport_bytes = [0] * 17
+# teleport_bytes[0] = 19
+# teleport_bytes = bytes(teleport_bytes)
 
 headings = [152, 332]
 
 window_name = 'OpenCV'
+action_labels = ['accelerate', 'nothing', 'brake/reverse', 'left', 'right']
 
 
 def get_heading_bytes(heading):
@@ -68,8 +76,28 @@ def read_or_reinitialise_capture(cap):
     return observation
 
 
-def get_new_capture():
-    video_capture = cv2.VideoCapture(2, cv2.CAP_V4L2)
+def display_captures():
+    for i in range(10):
+        capture = get_new_capture(index=i)
+
+        window_name = f'Capture {i}'
+        return_val = True
+        
+        while return_val:
+            return_val, frame = capture.read()
+
+            cv2.imshow(window_name, frame)
+            key_ord = cv2.waitKey(33)
+
+            if key_ord == ord('q'):
+                cv2.destroyWindow(window_name)
+                break
+
+    cv2.destroyAllWindows()
+
+
+def get_new_capture(index=2):
+    video_capture = cv2.VideoCapture(index, cv2.CAP_V4L2)
     video_capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
     video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -77,7 +105,11 @@ def get_new_capture():
 
 
 def render_loop(in_q, out_q, testing):
+    # from audio import CallbackPair
     video_capture = get_new_capture()
+
+    # callback_pair = CallbackPair()
+    # callback_pair.start()
 
     if testing:
         waitkey_duration = 1
@@ -103,17 +135,28 @@ def render_loop(in_q, out_q, testing):
         cv2.waitKey(waitkey_duration)
 
     video_capture.release()
+    # callback_pair.attempt_to_stop()
 
     in_q.cancel_join_thread()
     out_q.cancel_join_thread()
 
 
 class Env:
-    def __init__(self, render=True, stack=True, testing=False):
-        self.name = 'GTA'
+    def __init__(self, render=True, stack=False, testing=False):
+        self.name = env_name
         self.num_actions = 5
         self.max_return = 10_000
         self.random_eval_action = 1
+        self.max_steps_per_episode = 1000
+        self.evaluation_epsilon = 0.1
+
+        self.in_q = Queue()
+        self.frame_q = Queue()
+
+        # Start displaying capture card so I can login to Windows if necessary
+        self.rendering_process = Process(target=render_loop, args=(self.in_q, self.frame_q, testing),
+                                         daemon=True)
+        self.rendering_process.start()
 
         self.sock = socket()
 
@@ -122,25 +165,16 @@ class Env:
         print('Socket connected')
 
         self.timestep_dtype = np.dtype(
-            [('observation', np.uint8, (84, 84, 4)), ('action', np.int32), ('reward', np.float32)])
+            [('observation', np.uint8, (84, 84)), ('action', np.int32), ('reward', np.float32)])
 
         # self.video_capture = None
         # self.initialise_capture()
 
-        self.prev_position = starting_position
+        self.prev_position = None
         self.heading_number = 0
+        self.first_step = True
 
         self.stack = stack
-
-        self.in_q = Queue()
-        self.frame_q = Queue()
-
-        # render has to be True atm
-        if render:
-            # self.current_human_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-            # cv2.imshow(window_name, self.current_human_frame)  # Get QObject warnings out of the way
-            self.rendering_process = Process(target=render_loop, args=(self.in_q, self.frame_q, testing))
-            self.rendering_process.start()
 
         if stack:
             self.frame_deque = deque(maxlen=4)
@@ -148,7 +182,7 @@ class Env:
     def connect_socket(self):
         while True:
             try:
-                self.sock.connect(("192.168.178.23", 7001))
+                self.sock.connect(("DESKTOP-I426F5T", 7001))
                 break
             except Exception as ex:
                 print(ex)
@@ -169,12 +203,13 @@ class Env:
                 self.connect_socket()
 
         self.heading_number = (self.heading_number + 1) % len(headings)
-        self.prev_position = starting_position
+        # self.prev_position = starting_position
+        self.first_step = True
 
         frame = self.frame_q.get(block=True)
         # self.current_human_frame = frame
 
-        frame = downscale(frame)
+        # frame = downscale(frame)
 
         # if self.render:
         #     cv2.imshow(window_name, self.current_human_frame)
@@ -207,6 +242,10 @@ class Env:
         position = np.frombuffer(recv_bytes, dtype=np.float32, count=3, offset=5)
         submerged = bool(recv_bytes[17])
 
+        if self.first_step:
+            self.prev_position = position.copy()
+            self.first_step = False
+
         if submerged:
             reward = np.float32(0)
             terminated = True
@@ -217,7 +256,7 @@ class Env:
 
         frame = self.frame_q.get(block=True)
         # self.current_human_frame = frame
-        frame = downscale(frame)
+        # frame = downscale(frame)
 
         if self.stack:
             self.frame_deque.append(frame)
@@ -270,6 +309,9 @@ class Env:
 
         return keras.Model(inputs=inputs, outputs=q_values)
 
+    def pause(self):
+        self.sock.sendall(reinforcement_resumed_bytes)
+
     def close(self):
         cv2.destroyAllWindows()
 
@@ -279,17 +321,18 @@ class Env:
         # self.video_capture.release()
 
         self.in_q.put(None)
-        self.rendering_process.join()
+        # Blocks because of SDL
+        # self.rendering_process.join()
 
 
 def test_env():
     episode_reward = 0
-    key = 0
+    key_ord = 0
     testing = False
     env = Env(testing=testing)
     terminated = False
     while True:
-        if key == ord('q'):
+        if key_ord == ord('q'):
             break
 
         episode_reward = 0
@@ -300,28 +343,27 @@ def test_env():
                 terminated = False
                 break
 
-            observation = np.hstack(np.split(observation, 4, axis=2))
-
+            # observation = np.hstack(np.split(observation, 4, axis=2))
             cv2.imshow('Observation', observation)
 
             action = 1  # no-keys
 
             if testing:
-                key = cv2.waitKey(12)
+                key_ord = cv2.waitKey(12)
             else:
-                key = cv2.waitKey(1)
+                key_ord = cv2.waitKey(1)
 
-            if key == ord('q'):
+            if key_ord == ord('q'):
                 cv2.destroyAllWindows()
                 env.close()
                 break
-            elif key == ord('i'):
+            elif key_ord == ord('i'):
                 action = 0
-            elif key == ord('j'):
+            elif key_ord == ord('j'):
                 action = 3
-            elif key == ord('l'):
+            elif key_ord == ord('l'):
                 action = 4
-            elif key == ord('k'):
+            elif key_ord == ord('k'):
                 action = 2
 
             next_observation, reward, terminated = env.step(action)

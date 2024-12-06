@@ -4,7 +4,6 @@ from time import time, sleep
 
 import cv2
 import numpy as np
-import platform
 
 # How to reload a module in an interactive session:
 # import common
@@ -16,6 +15,9 @@ import platform
 
 # A variable that is only referenced within a function is assumed to be global, whereas a variable which is
 # assigned/modified is assumed to be local unless it is declared to be global.
+
+# The nonlocal keyword allows a function to rebind a name which was previously bound in the function's scope. 
+# I don't understand how this is different from the global keyword.
 
 # https://youtrack.jetbrains.com/issue/PY-54649/OpenCV-code-completion-is-still-not-working#focus=Comments-27-6172519.0-0
 # Used workaround #2 on this link to get rid of cv2 "cannot find reference" warnings (add cv2 package dir to interpreter
@@ -47,9 +49,9 @@ RIGHT = CORRECTION_KEYS[3]
 DISPLAY_WIDTH = 960
 DISPLAY_HEIGHT = 540
 
-model_dir = os.path.join(Path.home(), 'var', 'Models')
-data_dir = os.path.join(Path.home(), 'var', 'Data')
-checkpoint_dir = os.path.join(Path.home(), 'var', 'Checkpoints')
+
+def get_save_path(env_name, suffix):
+    return os.path.join(Path.home(), 'Data', env_name, suffix)
 
 
 # Generic version of this function for use in experimental scripts
@@ -105,7 +107,7 @@ def resize(im, width=None, height=None):
     return cv2.resize(im, (resize_width, resize_height), interpolation=cv2.INTER_NEAREST)
 
 
-def put_text(image, text, position=(50, 50), font=cv2.FONT_HERSHEY_SIMPLEX, colour=(255, 255, 255), size=1, thickness=2):
+def put_text(image, text, position=(50, 50), font=cv2.FONT_HERSHEY_SIMPLEX, colour=(255, 255, 255), size=1, thickness=1):
     cv2.putText(image, text, position, font, size, colour, thickness)
 
 

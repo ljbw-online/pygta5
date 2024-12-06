@@ -1,15 +1,22 @@
 import os
 import pickle
+from time import sleep
 from collections import deque
-from threading import Thread
+from pathlib import Path
+from threading import Thread, main_thread
+from queue import Queue, Empty
+from multiprocessing import Process, Queue
+from queue import Empty
 
 import cv2
 import numpy as np
 
-from common import model_dir, data_dir, checkpoint_dir
-from q_networks import dueling_architecture as get_q_net
-from environments.breakout import Env, gamma, epsilon_max, max_steps_per_episode
+from common import get_save_path
 from plot import Plot
+from q_networks import dueling_architecture as get_q_net
+from q_networks import QFunction
+from replay_buffer import ReplayBuffer
+from environments.gta import Env, gamma, action_labels, env_name
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 import tensorflow as tf
@@ -17,112 +24,61 @@ import keras
 from tensorflow.python.training.checkpoint_management import CheckpointManager
 from tensorflow.python.training.tracking.util import Checkpoint
 
-# TensorFlow versions newer than 2.9 seem to have a memory leak somewhere in the model training code, e.g. model.fit
-# or optimizer.apply_gradients
+# TensorFlow versions newer than 2.9 seem to have a memory leak somewhere in the model training code, e.g. in model.fit
+# and optimizer.apply_gradients
 
+testing = False
+if testing:
+    from environments.numbers_env import Env, gamma, epsilon_max, action_labels, env_name
+    epsilon_interval = 10_000
+    steps_per_save = 2_500
+    steps_per_evaluation = 1_000
+else:
+    epsilon_interval = 1_000_000
+    steps_per_save = 500_000
+    steps_per_evaluation = 500_000
+
+epsilon_max = 1.0
 epsilon_min = 0.1
 epsilon_range = epsilon_max - epsilon_min
-epsilon_interval = 1_000_000
 batch_size = 32
 steps_per_model_update = 4
 steps_per_target_update = 10_000
-max_replay_buffer_length = 250_000
-episodes_per_evaluation = 100
+num_eval_episodes = 30
 loss_function = keras.losses.Huber()
 optimizer = keras.optimizers.Adam(learning_rate=1e-5, clipnorm=1.0)
 gameover_penalty = np.float32(-1.0)
 
 rng = np.random.default_rng()
 
-env = Env()
-
-model_path = os.path.join(model_dir, env.name)
-target_model_path = os.path.join(model_dir, env.name + '_target')
-best_model_path = os.path.join(model_dir, env.name + '_best')
-replay_buffer_path = os.path.join(data_dir, env.name + '_replay_buffer')
-training_state_path = os.path.join(data_dir, env.name + '_training_state')
-checkpoint_dir = os.path.join(checkpoint_dir, env.name)
-
-checkpoint = Checkpoint(optimizer=optimizer)
-checkpoint_manager = CheckpointManager(checkpoint, checkpoint_dir, 1)
-
-observation_window_title = 'Observation'
-episode_q_predictions = []
-episode_prediction_step_counts = []
-episode_rewards = []
-
-labels = ['W', 'no-keys', 'S', 'WA', 'WD']
+replay_buffer_dir = get_save_path(env_name, 'replay_buffer')
+model_path = get_save_path(env_name, 'model')
+target_model_path = get_save_path(env_name, 'target_model')
+best_model_path = get_save_path(env_name, 'best_model')
+pickleable_state_path = get_save_path(env_name, 'training_state')
+checkpoint_dir = get_save_path(env_name, 'checkpoint')
 
 
-def compute_average_return(environment, model, num_episodes=10, single_step=False, render_env=False, render_obs=False):
-    total_return = 0.0
-
-    if single_step:
-        wait_key_duration = 0
-    else:
-        wait_key_duration = 1
-
-    # When we lose a life in Breakout we need to press action 1 to start the next life. Often the agent doesn't choose
-    # action 1 in response to the lost-life screen and hence gets indefinitely stuck. To work around this, if the env
-    # has a random_eval_action we inject it with a low probability.
-    try:
-        random_eval_action = environment.random_eval_action
-    except AttributeError:
-        random_eval_action = None
-
+def average_return(num_episodes, environment, q_function):
+    total_return = 0
     for _ in range(num_episodes):
-        observation = environment.reset()
-        terminated = False
-        episode_return = 0.0
+        episode, terminated, _, _ = run_episode(environment, q_function, epsilon=environment.evaluation_epsilon)
+        total_return += sum(episode['reward']) + np.float32(terminated)
 
-        for _ in range(max_steps_per_episode):
-            if terminated:
-                break
-
-            if render_obs:
-                cv2.imshow(observation_window_title, np.hstack(np.split(observation, 4, axis=2)))
-                cv2.waitKey(1)
-
-            if single_step or render_env:
-                key = environment.render()
-                # if key == ord('q'):
-                #     env.close()
-                #     return
-
-            # if cv2.waitKey(wait_key_duration) == ord('q'):
-            #     cv2.destroyAllWindows()
-            #     return None
-
-            q_predictions = model(tf.convert_to_tensor(np.expand_dims(observation, axis=0)), training=False)
-            action = tf.argmax(q_predictions[0]).numpy()
-
-            if random_eval_action is not None:
-                if rng.random() < 0.05:
-                    action = rng.choice(environment.num_actions)
-
-            observation, reward, terminated = environment.step(action)
-
-            if not terminated:
-                episode_return += reward
-
-        if single_step:
-            print(f'Episode return: {episode_return}')
-
-        total_return += episode_return
-
-    avg_return_local = total_return / num_episodes
-    return avg_return_local
+    return total_return / num_episodes
 
 
-input_string = ''
+def console_listen(console_q):
+    choice = 'n'
+    if os.path.isdir(replay_buffer_dir):
+        choice = input('Restore from disc? (Y/n)')
 
+    restore = choice != 'n'
 
-def get_input():
-    global input_string
+    console_q.put(restore)
+
     while True:
-        input_string = input()
-        if input_string == 'quit' or input_string == 'save_and_quit':
-            break
+        console_q.put(input())
 
 
 def discounted_reward_sums(gamma, rewards):
@@ -137,207 +93,284 @@ def discounted_reward_sums(gamma, rewards):
     return sums
 
 
-class TrainingState:
-    def __init__(self):
-        self.step_count = 0
-        self.best_eval_return = 0
-        self.episode_count = 0
-        self.episode_returns = deque(maxlen=100)
+def run_episode(environment, q_function, epsilon=1.0):
+    episode = []
+    terminated = False
+    step_count = 0
+    q_predictions = []
+    q_prediction_step_counts = []
+
+    q_function.clear()
+
+    observation = environment.reset()
+    for _ in range(environment.max_steps_per_episode):
+        if terminated:
+            break
+
+        if rng.random() < epsilon:
+            action = rng.choice(environment.num_actions)
+            downsampled_observation = q_function.downsampler(observation)
+        else:
+            current_step_q_predictions, downsampled_observation = q_function(observation)
+            action = tf.argmax(current_step_q_predictions).numpy()
+            q_predictions.append(current_step_q_predictions.numpy())
+            q_prediction_step_counts.append(step_count)
+
+        observation_next, reward, terminated = environment.step(action)
+
+        # A timestep consists of an observation, the action we took in response to that observation,
+        # and the reward the environment gave us in response to that action.
+        episode.append(np.array((downsampled_observation, action, reward), dtype=environment.timestep_dtype))
+
+        observation = observation_next
+        step_count += 1
+
+    # Release controls in GTA
+    environment.pause()
+
+    return np.array(episode), terminated, q_predictions, q_prediction_step_counts
 
 
-def main():
-    global input_string
-    thread = Thread(target=get_input)
-
+def display_plot(inq, outq):
     plot = Plot()
     plot.title = 'Q-values'
     plot.xlabel = 'Step count'
     plot.width = 12
-    plot.top = 1.4
-    plot.bottom = -0.6
+    key = 0
 
-    choice = 'n'
-    if os.path.isfile(replay_buffer_path):
-        choice = input('Restore from disc? (y/N)')
+    window_name = 'Q-values'
+    cv2.namedWindow(window_name)
 
-    if choice == 'y':
-        model = keras.models.load_model(model_path)
-        target_model = keras.models.load_model(target_model_path)
+    rewards, q_predictions, q_prediction_step_counts = inq.get()
+    while True:
+        try:
+            rewards, q_predictions, q_prediction_step_counts  = inq.get(block=False)
+        except Empty:
+            pass
+        
+        plot.clear()
+        plot.add_line(range(len(rewards)), discounted_reward_sums(gamma, rewards), label='discounted reward')
+        
+        for label, action_values in zip(action_labels, np.transpose(q_predictions)):
+            plot.add_line(q_prediction_step_counts, action_values, label=label)
 
-        checkpoint.restore(checkpoint_manager.latest_checkpoint)
+        cv2.imshow(window_name, plot.to_array())
+        key_ord = cv2.waitKey(33)
 
-        with open(replay_buffer_path, 'rb') as data_file:
-            replay_buffer = pickle.load(data_file)
+        if key_ord != -1:
+            key = chr(key_ord)
+            outq.put(key)
 
-        with open(training_state_path, 'rb') as training_state_file:
-            ts = pickle.load(training_state_file)
-    else:
-        model = get_q_net(env.input_shape, env.num_actions)
-        target_model = get_q_net(env.input_shape, env.num_actions)
+        # if key == 'q':
+        #     break
 
-        replay_buffer = deque(maxlen=max_replay_buffer_length)
-        ts = TrainingState()
+        
+
+class PickleableTrainingState:
+    def __init__(self, replay_buffer_dir, env, obs_seq_len, max_episodes):
+        self.step_count = 0
+        self.best_average_return = 0
+        self.episode_returns = deque(maxlen=100)
+        self.steps_since_target_update = 0
+        self.steps_since_save = 0
+        self.steps_since_evaluation = 0
+
+        if testing:
+            self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
+                                              obs_seq_len=obs_seq_len, max_episodes=10)
+        else:
+            self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype, 
+                                              obs_seq_len=obs_seq_len)
+
+
+class TrainingState:
+    def __init__(self, env, obs_seq_len=4, max_episodes=1_000, restore=False):
+        checkpoint = Checkpoint(optimizer=optimizer)
+        self.checkpoint_manager = CheckpointManager(checkpoint, checkpoint_dir, 1)
+
+        if restore:
+            with open(pickleable_state_path, 'rb') as pickleable_state_file:
+                self.pts = pickle.load(pickleable_state_file)
+
+            # Re-create all of the memory maps
+            self.pts.replay_buffer.populate_episodes_deque()
+
+            self.model = keras.models.load_model(model_path)
+            self.target_model = keras.models.load_model(target_model_path)
+
+            checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
+
+        else:
+            # Moved this to replay_buffer.py
+            # try:
+            #     os.makedirs(replay_buffer_dir)
+            # except FileExistsError:
+            #     pass
+
+            self.pts = PickleableTrainingState(replay_buffer_dir, env, obs_seq_len, max_episodes)
+
+            observation_shape = env.timestep_dtype['observation'].shape
+            input_shape = observation_shape + (obs_seq_len,)
+            self.model = get_q_net(input_shape, env.num_actions)
+            self.target_model = get_q_net(input_shape, env.num_actions)
+
+    def save(self):
+        print('Saving training state...')
+
+        # We've seen "OSError: too many open files" when saving. Maybe because this:
+        # self.pts.replay_buffer.episodes.clear()
+        # doesn't actually cause all of the memory maps to get garbage collected.
+        
+        # Stop all of the episode arrays from being included in the pickle file
+        episodes = self.pts.replay_buffer.episodes
+        self.pts.replay_buffer.episodes = deque()
+
+        with open(pickleable_state_path, 'wb') as pickleable_state_file:
+            pickle.dump(self.pts, pickleable_state_file)
+
+        self.model.save(model_path)
+        self.target_model.save(target_model_path)
+
+        self.checkpoint_manager.save()
+
+        # Add all of the memmaps back in case we want to continue training
+        self.pts.replay_buffer.episodes = episodes
+        # episodes = None
+        
+        print('... Done.')
+
+
+def main():
+    console_queue = Queue()
+    
+    # daemon allows the script to exit whilst this thread is running.
+    # This thread has caused Python to crash before, possibly because I was calling the input function 
+    # in the main thread as well.
+    thread = Thread(target=console_listen, args=(console_queue,), daemon=True)
+
+    key = 0
+    inq = Queue()
+    outq = Queue()
+    process = Process(target=display_plot, args=(inq, outq), daemon=True)
+    process.start()
+
+    env = Env()
+
+    obs_seq_length = 4
+
+    sleep(1)  # OpenCV warnings
 
     thread.start()
 
+    restore = console_queue.get()
+
+    if restore:
+        print('Restoring')
+
+    ts = TrainingState(env, restore=restore)
+
+    q_function = QFunction(obs_seq_length, env, ts.model)
+
     # Stops a warning when saving
-    model.compile()
-    target_model.compile()
+    ts.model.compile()
+    ts.target_model.compile()
 
-    print(f'len(replay_buffer): {len(replay_buffer)}')
-
-    def save_training_state():
-        print('Saving models, optimiser, replay buffer and training state.')
-        model.save(model_path)
-        target_model.save(target_model_path)
-
-        checkpoint_manager.save()
-
-        with open(replay_buffer_path, 'wb') as data_file:
-            pickle.dump(replay_buffer, data_file)
-
-        with open(training_state_path, 'wb') as training_state_file:
-            pickle.dump(ts, training_state_file)
-
-        print('Saved.')
-
-    terminated = False
-    observation = env.reset()
-
-    # Put a batch of timesteps into the replay buffer. The +1 is because we always need an observation_next.
-    for _ in range(batch_size + 1):
-        if terminated:
-            observation = env.reset()
-
-        action = rng.choice(env.num_actions)
-        observation_next, reward, terminated = env.step(action)
-        replay_buffer.append(np.array((observation, action, reward), dtype=env.timestep_dtype))
-        observation = observation_next
+    print(f'len(replay_buffer): {len(ts.pts.replay_buffer)}')
 
     while True:
-        if input_string == 'quit':
-            env.close()
-            cv2.destroyAllWindows()
-            thread.join()
-            break
-        elif input_string == 'save_and_quit':
-            save_training_state()
-            env.close()
-            cv2.destroyAllWindows()
-            thread.join()
-            break
-        elif input_string == 'save':
-            save_training_state()
-            input_string = ''
+        try:
+            key = console_queue.get(block=False)
+        except Empty:
+            pass
+        
+        match key:
+            case 's':
+                ts.save()
+            case 'q':
+                print('Save? (Y/n)')
+                save_choice  = console_queue.get()
 
-        observation = env.reset()
-        episode_return = 0
-        episode_step_count = 0
-        episode_q_predictions.clear()
-        episode_prediction_step_counts.clear()
-        episode_rewards.clear()
+                # Not saving here stops restoring from working later due to reply buffer implementation
+                if save_choice  != 'n':
+                    ts.save()
 
-        for _ in range(max_steps_per_episode):
-            if input_string == 'quit':
+                env.close()
+                cv2.destroyAllWindows()
                 break
 
-            if terminated:
-                terminated = False
-                break
+        epsilon = max(epsilon_max - epsilon_range * (ts.pts.step_count / epsilon_interval), epsilon_min)
+        episode, terminated, q_predictions, q_prediction_step_counts = run_episode(env, q_function, epsilon)
 
-            ts.step_count += 1
-            episode_step_count += 1
+        # clip rewards
+        for i, reward in enumerate(episode['reward']):
+            episode['reward'][i] = min(1.0, reward)
 
-            # env.render()
-            # cv2.imshow(observation_window_title, np.hstack(np.split(observation, 4, axis=2)))
-            # cv2.waitKey(1)
+        if terminated:
+            episode['reward'][-1] = gameover_penalty
 
-            if rng.random() < max(epsilon_min, epsilon_max - epsilon_range * (ts.step_count / epsilon_interval)):
-                action = rng.choice(env.num_actions)
-            else:
-                model_input = np.expand_dims(observation, axis=0)
-                model_input = tf.convert_to_tensor(model_input)
-                q_predictions = model(model_input, training=False)[0]
-                action = tf.argmax(q_predictions).numpy()
-                episode_q_predictions.append(q_predictions.numpy())
-                episode_prediction_step_counts.append(episode_step_count)
+        ts.pts.replay_buffer.add_episode(episode)
 
-            observation_next, reward, terminated = env.step(action)
+        ts.pts.step_count += len(episode)
+        ts.pts.steps_since_target_update += len(episode)
+        ts.pts.steps_since_save += len(episode)
+        ts.pts.steps_since_evaluation += len(episode)
+        ts.pts.episode_returns.append(sum(episode['reward']) + np.float32(terminated))
 
-            episode_return += reward
+        inq.put((episode['reward'], q_predictions, q_prediction_step_counts))
 
-            if terminated:
-                reward = gameover_penalty
+        try:
+            key = outq.get(block=False)
+        except Empty:
+            key = ''
 
-            episode_rewards.append(reward)
+        # Update every fourth frame
+        for _ in range(int(len(episode) / steps_per_model_update)):
+        # for _ in range(len(episode)):  # Update once for every timestep collected
+            observation_sample, observation_next_sample, action_sample, reward_sample = ts.pts.replay_buffer.get_batch()
 
-            # A timestep consists of an observation, the action we took in response to it, and the reward we got on
-            # the next step.
-            replay_buffer.append(np.array((observation, action, reward), dtype=env.timestep_dtype))
+            # (batch, seq_len, width, height) -> (batch, width, height, seq_len)
+            observation_sample = np.moveaxis(observation_sample, 1, -1)
+            observation_next_sample = np.moveaxis(observation_next_sample, 1, -1)
 
-            observation = observation_next
+            future_actions = tf.argmax(ts.model.predict(observation_next_sample, verbose=0), axis=1)
+            future_onehot_actions = tf.one_hot(future_actions, env.num_actions)
 
-            # Update every fourth frame
-            if ts.step_count % steps_per_model_update == 0:
-                # The -1 is because we get replay_buffer[i + 1] below
-                indices = rng.choice(range(len(replay_buffer) - 1), size=batch_size)
+            future_value_estimates = ts.target_model.predict(observation_next_sample, verbose=0)
+            future_action_values = tf.reduce_sum(tf.multiply(future_value_estimates, future_onehot_actions), axis=1)
 
-                observation_sample = np.array([replay_buffer[i]['observation'] for i in indices])
-                observation_next_sample = np.array([replay_buffer[i + 1]['observation'] for i in indices])
-                action_sample = [replay_buffer[i]['action'] for i in indices]
-                reward_sample = [replay_buffer[i]['reward'] for i in indices]
+            updated_q_values = reward_sample + gamma * future_action_values
 
-                future_actions = tf.argmax(model.predict(observation_next_sample, verbose=0), axis=1)
-                future_onehot_actions = tf.one_hot(future_actions, env.num_actions)
+            onehot_actions = tf.one_hot(action_sample, env.num_actions)
 
-                future_value_estimates = target_model.predict(observation_next_sample, verbose=0)
-                future_action_values = tf.reduce_sum(tf.multiply(future_value_estimates, future_onehot_actions), axis=1)
+            with tf.GradientTape() as tape:
+                q_values = ts.model(observation_sample)
+                q_action = tf.reduce_sum(tf.multiply(q_values, onehot_actions), axis=1)
+                loss = loss_function(updated_q_values, q_action)
 
-                updated_q_values = reward_sample + gamma * future_action_values
+            grads = tape.gradient(loss, ts.model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, ts.model.trainable_variables))
 
-                onehot_actions = tf.one_hot(action_sample, env.num_actions)
+        print(f'step_count: {ts.pts.step_count}, loss: {loss}, average return: {np.mean(ts.pts.episode_returns)}')
 
-                with tf.GradientTape() as tape:
-                    q_values = model(observation_sample)
-                    q_action = tf.reduce_sum(tf.multiply(q_values, onehot_actions), axis=1)
-                    loss = loss_function(updated_q_values, q_action)
+        if ts.pts.steps_since_target_update >= steps_per_target_update:
+            # If we set steps_since_target_update to zero then the updates go out of phase with multiples of
+            # steps_per_target_update
+            ts.pts.steps_since_target_update = ts.pts.steps_since_target_update - steps_per_target_update
+            ts.target_model.set_weights(ts.model.get_weights())
 
-                grads = tape.gradient(loss, model.trainable_variables)
-                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+        if ts.pts.steps_since_save >= steps_per_save:
+            ts.pts.steps_since_save = ts.pts.steps_since_save - steps_per_save
+            ts.save()
 
-            if ts.step_count % steps_per_target_update == 0:
-                target_model.set_weights(model.get_weights())
+        if ts.pts.steps_since_evaluation >= steps_per_evaluation:
+            ts.pts.steps_since_evaluation = ts.pts.steps_since_evaluation - steps_per_evaluation
+            evaluation_return = average_return(30, env, q_function)
 
-            if ts.step_count % max_replay_buffer_length == 0:
-                save_training_state()
-
-        ts.episode_count += 1
-        ts.episode_returns.append(episode_return)
-
-        plot.clear()
-        plot.add_line(range(len(episode_rewards)), discounted_reward_sums(gamma, episode_rewards),
-                      label='discounted reward')
-
-        for label, action_values in zip(labels, np.transpose(episode_q_predictions)):
-            plot.add_line(episode_prediction_step_counts, action_values, label=label)
-
-        cv2.imshow('Q-values', plot.to_array())
-        cv2.waitKey(1)
-
-        if ts.episode_count % 1 == 0:
-            print(f'step_count: {ts.step_count}, loss: {loss}, '
-                  f'average return: {np.mean(ts.episode_returns)}')
-
-        if ts.episode_count % episodes_per_evaluation == 0:
-            eval_return = compute_average_return(env, model, num_episodes=10, render_env=False, render_obs=False)
-            print(f'eval_return: {eval_return}')
-            if eval_return > ts.best_eval_return:
-                ts.best_eval_return = eval_return
-
-                save_training_state()
-
-                print("Saving best model.")
-                model.save(best_model_path)
+            print(f'evaluation_return: {evaluation_return}')
+            if evaluation_return > ts.pts.best_average_return:
+                ts.pts.best_average_return = evaluation_return
+                print('Saving best model')
+                ts.model.save(best_model_path)
 
 
 if __name__ == '__main__':

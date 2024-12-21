@@ -1,60 +1,66 @@
+import json
 import os
 import pickle
 from time import sleep
 from collections import deque
-from pathlib import Path
-from threading import Thread, main_thread
-from queue import Queue, Empty
-from multiprocessing import Process, Queue
+from threading import Thread
 from queue import Empty
+from multiprocessing import Process, Queue
 
 import cv2
 import numpy as np
+from websockets.sync.server import serve
 
 from common import get_save_path
 from plot import Plot
-from q_networks import dueling_architecture as get_q_net
 from q_networks import QFunction
+from q_networks import dueling_architecture as get_q_net
 from replay_buffer import ReplayBuffer
-from environments.gta import Env, gamma, action_labels, env_name
+from environments.breakout import Env, gamma, action_labels, env_name
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 import tensorflow as tf
 import keras
-from tensorflow.python.training.checkpoint_management import CheckpointManager
-from tensorflow.python.training.tracking.util import Checkpoint
+from tensorflow.train import Checkpoint, CheckpointManager
+# from tensorflow.python.training.checkpoint_management import CheckpointManager
+# from tensorflow.python.training.tracking.util import Checkpoint
 
 # TensorFlow versions newer than 2.9 seem to have a memory leak somewhere in the model training code, e.g. in model.fit
 # and optimizer.apply_gradients
 
-testing = False
+rng = np.random.default_rng()
+websocket_port = 7001
+
+testing = True
 if testing:
     from environments.numbers_env import Env, gamma, epsilon_max, action_labels, env_name
-    epsilon_interval = 10_000
-    steps_per_save = 2_500
-    steps_per_evaluation = 1_000
+    epsilon_interval = 2_500
+    iterations_per_save = 500
+    iterations_per_evaluation = 250
+    num_eval_episodes = 3
+    evaluation_epsilon = 1.0
 else:
-    epsilon_interval = 1_000_000
-    steps_per_save = 500_000
-    steps_per_evaluation = 500_000
+    epsilon_max = 1.0
+    epsilon_interval = 250_000
+    iterations_per_save = 125_000
+    iterations_per_evaluation = 125_000
+    num_eval_episodes = 30
+    evaluation_epsilon = 0.05
 
-epsilon_max = 1.0
 epsilon_min = 0.1
 epsilon_range = epsilon_max - epsilon_min
 batch_size = 32
-steps_per_model_update = 4
-steps_per_target_update = 10_000
-num_eval_episodes = 30
+steps_per_model_update = 2 / 3  # 3 updates for 2 timesteps
+iterations_per_target_update = 10_000
 loss_function = keras.losses.Huber()
 optimizer = keras.optimizers.Adam(learning_rate=1e-5, clipnorm=1.0)
 gameover_penalty = np.float32(-1.0)
-
-rng = np.random.default_rng()
+obs_seq_len = 4
 
 replay_buffer_dir = get_save_path(env_name, 'replay_buffer')
-model_path = get_save_path(env_name, 'model')
-target_model_path = get_save_path(env_name, 'target_model')
-best_model_path = get_save_path(env_name, 'best_model')
+model_path = get_save_path(env_name, 'model.keras')
+target_model_path = get_save_path(env_name, 'target_model.keras')
+best_model_path = get_save_path(env_name, 'best_model.keras')
 pickleable_state_path = get_save_path(env_name, 'training_state')
 checkpoint_dir = get_save_path(env_name, 'checkpoint')
 
@@ -131,12 +137,11 @@ def run_episode(environment, q_function, epsilon=1.0):
     return np.array(episode), terminated, q_predictions, q_prediction_step_counts
 
 
-def display_plot(inq, outq):
+def display_plot(inq):
     plot = Plot()
     plot.title = 'Q-values'
     plot.xlabel = 'Step count'
     plot.width = 12
-    key = 0
 
     window_name = 'Q-values'
     cv2.namedWindow(window_name)
@@ -147,39 +152,96 @@ def display_plot(inq, outq):
             rewards, q_predictions, q_prediction_step_counts  = inq.get(block=False)
         except Empty:
             pass
-        
+
         plot.clear()
         plot.add_line(range(len(rewards)), discounted_reward_sums(gamma, rewards), label='discounted reward')
-        
+
         for label, action_values in zip(action_labels, np.transpose(q_predictions)):
             plot.add_line(q_prediction_step_counts, action_values, label=label)
 
         cv2.imshow(window_name, plot.to_array())
-        key_ord = cv2.waitKey(33)
+        cv2.waitKey(33)
 
-        if key_ord != -1:
-            key = chr(key_ord)
-            outq.put(key)
 
-        # if key == 'q':
-        #     break
+def test_handler(websock):
+    print(f'websock received {type(websock.recv())}')
 
-        
+
+def run_server(inq, outq):
+    print('hello from server process')
+    # agent_comms has to refer to inq and outq but we can't pass them in as an arguments.
+    def agent_comms(websock):
+        while True:
+            try:
+                trainer_msg = inq.get(block=False)
+                websock.send(trainer_msg)
+            except Empty:
+                try:
+                    # Use a recv timeout so that keep checking for things to send
+                    outq.put(websock.recv(1))
+                except TimeoutError:
+                    pass
+
+    with serve(agent_comms, "localhost", websocket_port, max_size=None) as server:
+        print('starting server')
+        server.serve_forever()
+
+
+def send_json_to_agent(ts, server_in_q, currently_evaluating=False):
+    if currently_evaluating:
+        epsilon = evaluation_epsilon
+    else:
+        epsilon = max(epsilon_max - epsilon_range * (ts.pts.timestep_count / epsilon_interval), epsilon_min)
+
+    weights_config = keras.saving.serialize_keras_object(ts.model.get_weights())
+
+    data_for_agent = {'epsilon': epsilon, 'weights_config': weights_config}
+    json_for_agent = json.dumps(data_for_agent)
+
+    server_in_q.put(json_for_agent)
+
+
+def handle_new_episode(ts, episode, terminated, q_predictions, q_prediction_step_counts, display_q):
+    # ALL OF THIS COULD BE A TrainingState METHOD
+    # clip rewards
+    for i, reward in enumerate(episode['reward']):
+        episode['reward'][i] = min(1.0, reward)
+
+    if terminated:
+        episode['reward'][-1] = gameover_penalty
+
+    ts.pts.replay_buffer.add_episode(episode)
+
+    ts.pts.timestep_count += len(episode)
+    # ts.pts.timesteps_since_target_update += len(episode)
+    # ts.pts.timesteps_since_save += len(episode)
+    # ts.pts.timesteps_since_evaluation += len(episode)
+
+    episode_return = sum(episode['reward']) + np.float32(terminated)
+
+    ts.pts.episode_returns.append(episode_return)
+    # ----
+
+    display_q.put((episode['reward'], q_predictions, q_prediction_step_counts))
+
+    return episode_return
+
 
 class PickleableTrainingState:
     def __init__(self, replay_buffer_dir, env, obs_seq_len, max_episodes):
-        self.step_count = 0
+        self.timestep_count = 0
         self.best_average_return = 0
         self.episode_returns = deque(maxlen=100)
-        self.steps_since_target_update = 0
-        self.steps_since_save = 0
-        self.steps_since_evaluation = 0
+        self.iterations_since_target_update = 0
+        self.iterations_since_save = 0
+        self.iterations_since_evaluation = 0
+        self.training_iteration_count = 0
 
         if testing:
             self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
                                               obs_seq_len=obs_seq_len, max_episodes=10)
         else:
-            self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype, 
+            self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
                                               obs_seq_len=obs_seq_len)
 
 
@@ -201,12 +263,6 @@ class TrainingState:
             checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
 
         else:
-            # Moved this to replay_buffer.py
-            # try:
-            #     os.makedirs(replay_buffer_dir)
-            # except FileExistsError:
-            #     pass
-
             self.pts = PickleableTrainingState(replay_buffer_dir, env, obs_seq_len, max_episodes)
 
             observation_shape = env.timestep_dtype['observation'].shape
@@ -220,12 +276,13 @@ class TrainingState:
         # We've seen "OSError: too many open files" when saving. Maybe because this:
         # self.pts.replay_buffer.episodes.clear()
         # doesn't actually cause all of the memory maps to get garbage collected.
-        
+
         # Stop all of the episode arrays from being included in the pickle file
         episodes = self.pts.replay_buffer.episodes
         self.pts.replay_buffer.episodes = deque()
 
         with open(pickleable_state_path, 'wb') as pickleable_state_file:
+            # pickleable_state_file : SupportsWrite[bytes]
             pickle.dump(self.pts, pickleable_state_file)
 
         self.model.save(model_path)
@@ -236,30 +293,30 @@ class TrainingState:
         # Add all of the memmaps back in case we want to continue training
         self.pts.replay_buffer.episodes = episodes
         # episodes = None
-        
+
         print('... Done.')
 
 
 def main():
     console_queue = Queue()
-    
+
     # daemon allows the script to exit whilst this thread is running.
     # This thread has caused Python to crash before, possibly because I was calling the input function 
     # in the main thread as well.
     thread = Thread(target=console_listen, args=(console_queue,), daemon=True)
 
-    key = 0
-    inq = Queue()
-    outq = Queue()
-    process = Process(target=display_plot, args=(inq, outq), daemon=True)
-    process.start()
+    display_q = Queue()
+    display_process = Process(target=display_plot, args=(display_q,), daemon=True)
+    display_process.start()
+
+    server_in_q = Queue()
+    server_out_q = Queue()
+    server_process = Process(target=run_server, args=(server_in_q, server_out_q), daemon=True)
 
     env = Env()
 
-    obs_seq_length = 4
-
-    sleep(1)  # OpenCV warnings
-
+    # Wait for OpenCV warnings before starting console_listen thread
+    sleep(1)
     thread.start()
 
     restore = console_queue.get()
@@ -269,28 +326,53 @@ def main():
 
     ts = TrainingState(env, restore=restore)
 
-    q_function = QFunction(obs_seq_length, env, ts.model)
-
     # Stops a warning when saving
     ts.model.compile()
     ts.target_model.compile()
 
     print(f'len(replay_buffer): {len(ts.pts.replay_buffer)}')
 
+    print('sending first msg to agent')
+    send_json_to_agent(ts, server_in_q)
+    send_json_to_agent(ts, server_in_q)  # Send weights to agent again to stop it from waiting indefinitely.
+
+    # Server has to be started after we've put the first thing on the queue otherwise it will wait indefinitely.
+    server_process.start()
+
+    print('waiting for first episode to come back')
+    # Wait for the first episode to come back so that we have something to train with.
+    json_from_agent = server_out_q.get(block=True)
+    print('received first episode')
+
+    episode, terminated, q_predictions, q_prediction_step_counts = json.loads(json_from_agent)
+
+    for i, timestep_list in enumerate(episode):
+        episode[i] = tuple(timestep_list)
+
+    episode = np.array(episode, dtype=env.timestep_dtype)
+
+    handle_new_episode(ts, episode, terminated, q_predictions, q_prediction_step_counts, display_q)
+
+    currently_evaluating = False
+    evaluation_returns = []
+    evaluation_episode_count = 0
+    key = ''
+
     while True:
         try:
             key = console_queue.get(block=False)
         except Empty:
             pass
-        
+
         match key:
             case 's':
                 ts.save()
+                key = ''  # Reset so we don't keep saving
             case 'q':
                 print('Save? (Y/n)')
                 save_choice  = console_queue.get()
 
-                # Not saving here stops restoring from working later due to reply buffer implementation
+                # Not saving here stops restoring from working later due to the replay buffer implementation
                 if save_choice  != 'n':
                     ts.save()
 
@@ -298,34 +380,36 @@ def main():
                 cv2.destroyAllWindows()
                 break
 
-        epsilon = max(epsilon_max - epsilon_range * (ts.pts.step_count / epsilon_interval), epsilon_min)
-        episode, terminated, q_predictions, q_prediction_step_counts = run_episode(env, q_function, epsilon)
-
-        # clip rewards
-        for i, reward in enumerate(episode['reward']):
-            episode['reward'][i] = min(1.0, reward)
-
-        if terminated:
-            episode['reward'][-1] = gameover_penalty
-
-        ts.pts.replay_buffer.add_episode(episode)
-
-        ts.pts.step_count += len(episode)
-        ts.pts.steps_since_target_update += len(episode)
-        ts.pts.steps_since_save += len(episode)
-        ts.pts.steps_since_evaluation += len(episode)
-        ts.pts.episode_returns.append(sum(episode['reward']) + np.float32(terminated))
-
-        inq.put((episode['reward'], q_predictions, q_prediction_step_counts))
-
         try:
-            key = outq.get(block=False)
-        except Empty:
-            key = ''
+            # episode, terminated, q_predictions, q_prediction_step_counts = run_episode(env, q_function, epsilon)
+            episode, terminated, q_predictions, q_prediction_step_counts = json.loads(server_out_q.get(block=False))
 
-        # Update every fourth frame
+            for i, timestep_list in enumerate(episode):
+                episode[i] = tuple(timestep_list)
+
+            episode = np.array(episode, dtype=env.timestep_dtype)
+
+            new_episode = True
+        except Empty:
+            print('no new ep')
+            new_episode = False
+
+        if new_episode:
+            episode_return = handle_new_episode(ts, episode, terminated, q_predictions, q_prediction_step_counts,
+                                                display_q)
+
+            if currently_evaluating:
+                evaluation_returns.append(episode_return)
+                evaluation_episode_count += 1
+
+            print(
+                f'training_iteration_count: {ts.pts.training_iteration_count}, loss: {loss}, '
+                f'average return: {np.mean(ts.pts.episode_returns)}, timesteps collected: {ts.pts.timestep_count}')
+
+            send_json_to_agent(ts, server_in_q, currently_evaluating)
+
+        # Update the model once for every steps_per_model_update timesteps collected
         for _ in range(int(len(episode) / steps_per_model_update)):
-        # for _ in range(len(episode)):  # Update once for every timestep collected
             observation_sample, observation_next_sample, action_sample, reward_sample = ts.pts.replay_buffer.get_batch()
 
             # (batch, seq_len, width, height) -> (batch, width, height, seq_len)
@@ -350,23 +434,34 @@ def main():
             grads = tape.gradient(loss, ts.model.trainable_variables)
             optimizer.apply_gradients(zip(grads, ts.model.trainable_variables))
 
-        print(f'step_count: {ts.pts.step_count}, loss: {loss}, average return: {np.mean(ts.pts.episode_returns)}')
+            ts.pts.training_iteration_count += 1
+            ts.pts.iterations_since_target_update += 1
+            ts.pts.iterations_since_save += 1
+            ts.pts.iterations_since_evaluation += 1
 
-        if ts.pts.steps_since_target_update >= steps_per_target_update:
-            # If we set steps_since_target_update to zero then the updates go out of phase with multiples of
-            # steps_per_target_update
-            ts.pts.steps_since_target_update = ts.pts.steps_since_target_update - steps_per_target_update
+        # Setting the steps_since_* variable to zero causes us to go out of phase with multiples of the
+        # corresponding steps_per_* variable.
+        if ts.pts.iterations_since_target_update >= iterations_per_target_update:
+            ts.pts.iterations_since_target_update = ts.pts.iterations_since_target_update - iterations_per_target_update
             ts.target_model.set_weights(ts.model.get_weights())
 
-        if ts.pts.steps_since_save >= steps_per_save:
-            ts.pts.steps_since_save = ts.pts.steps_since_save - steps_per_save
+        if ts.pts.iterations_since_save >= iterations_per_save:
+            ts.pts.iterations_since_save = ts.pts.iterations_since_save - iterations_per_save
             ts.save()
 
-        if ts.pts.steps_since_evaluation >= steps_per_evaluation:
-            ts.pts.steps_since_evaluation = ts.pts.steps_since_evaluation - steps_per_evaluation
-            evaluation_return = average_return(30, env, q_function)
+        if ts.pts.iterations_since_evaluation >= iterations_per_evaluation:
+            ts.pts.iterations_since_evaluation = ts.pts.iterations_since_evaluation - iterations_per_evaluation
+            currently_evaluating = True
+            print('Starting evaluation')
 
-            print(f'evaluation_return: {evaluation_return}')
+        if evaluation_episode_count == num_eval_episodes:
+            evaluation_return = np.mean(evaluation_returns)
+
+            currently_evaluating = False
+            evaluation_episode_count = 0
+            evaluation_returns.clear()
+
+            print(f'Evaluation average return: {evaluation_return}')
             if evaluation_return > ts.pts.best_average_return:
                 ts.pts.best_average_return = evaluation_return
                 print('Saving best model')

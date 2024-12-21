@@ -96,20 +96,8 @@ class Env:
 
         return observation, reward, terminated
 
-    # def create_q_net(self):
-    #     inputs = layers.Input(shape=(84, 84, 4))
-    #     rescaling = layers.Rescaling(1. / 255)(inputs)
-    #
-    #     conv1 = layers.Conv2D(32, 8, strides=4, activation='relu')(rescaling)
-    #     conv2 = layers.Conv2D(64, 4, strides=2, activation='relu')(conv1)
-    #     conv3 = layers.Conv2D(64, 3, strides=1, activation='relu')(conv2)
-    #
-    #     flatten = layers.Flatten()(conv3)
-    #
-    #     dense = layers.Dense(512, activation='relu')(flatten)
-    #     q_values = layers.Dense(self.num_actions, activation='linear')(dense)
-    #
-    #     return keras.Model(inputs=inputs, outputs=q_values)
+    def pause(self):
+        return
 
     def close(self):
         cv2.destroyAllWindows()

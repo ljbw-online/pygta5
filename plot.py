@@ -43,10 +43,13 @@ class Plot:
 
         self.axes.legend()
         self.figure.canvas.draw()  # necessary for tostring_rgb
-        width, height = self.figure.canvas.get_width_height()
-        flat_array = np.frombuffer(self.figure.canvas.tostring_rgb(), dtype=np.uint8)
-        bgr_array = flat_array.reshape((height, width, 3))
-        return cv2.cvtColor(bgr_array, cv2.COLOR_BGR2RGB)
+        width, height = self.figure.canvas.get_width_height(physical=True)
+        # flat_array = np.frombuffer(self.figure.canvas.tostring_rgb(), dtype=np.uint8)
+        flat_array = np.frombuffer(self.figure.canvas.buffer_rgba(), dtype=np.uint8)
+        # bgr_array = flat_array.reshape((height, width, 3))
+        bgr_array = flat_array.reshape((height, width, 4))
+        # return cv2.cvtColor(bgr_array, cv2.COLOR_BGR2RGB)
+        return cv2.cvtColor(bgr_array, cv2.COLOR_BGRA2RGB)
 
 
 if __name__ == '__main__':
@@ -66,8 +69,8 @@ if __name__ == '__main__':
         y1 = rng.random(size=10)
         y2 = rng.random(size=10)
 
-        plot.add_line(x, y1, label='y1')
-        plot.add_line(x, y2, label='y2')
+        plot.add_line(x, y1, 'r', label='should be red')
+        plot.add_line(x, y2, 'b', label='should be blue')
 
         plot_array = plot.to_array()
         cv2.imshow('plot.py', plot_array)

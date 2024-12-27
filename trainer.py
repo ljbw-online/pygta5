@@ -191,7 +191,7 @@ def send_json_to_agent(ts, server_in_q, currently_evaluating=False):
     if currently_evaluating:
         epsilon = evaluation_epsilon
     else:
-        epsilon = max(epsilon_max - epsilon_range * (ts.pts.timestep_count / epsilon_interval), epsilon_min)
+        epsilon = max(epsilon_max - epsilon_range * (ts.timestep_count / epsilon_interval), epsilon_min)
 
     weights_config = keras.saving.serialize_keras_object(ts.model.get_weights())
 
@@ -201,74 +201,53 @@ def send_json_to_agent(ts, server_in_q, currently_evaluating=False):
     server_in_q.put(json_for_agent)
 
 
-def handle_new_episode(ts, episode, terminated, q_predictions, q_prediction_step_counts, display_q):
-    # ALL OF THIS COULD BE A TrainingState METHOD
-    # clip rewards
-    for i, reward in enumerate(episode['reward']):
-        episode['reward'][i] = min(1.0, reward)
-
-    if terminated:
-        episode['reward'][-1] = gameover_penalty
-
-    ts.pts.replay_buffer.add_episode(episode)
-
-    ts.pts.timestep_count += len(episode)
-    # ts.pts.timesteps_since_target_update += len(episode)
-    # ts.pts.timesteps_since_save += len(episode)
-    # ts.pts.timesteps_since_evaluation += len(episode)
-
-    episode_return = sum(episode['reward']) + np.float32(terminated)
-
-    ts.pts.episode_returns.append(episode_return)
-    # ----
-
-    display_q.put((episode['reward'], q_predictions, q_prediction_step_counts))
-
-    return episode_return
-
-
-class PickleableTrainingState:
-    def __init__(self, replay_buffer_dir, env, obs_seq_len, max_episodes):
+class TrainingState:
+    def __init__(self, env, obs_seq_len=4, max_episodes=1_000):
         self.timestep_count = 0
         self.best_average_return = 0
         self.episode_returns = deque(maxlen=100)
-        self.iterations_since_target_update = 0
-        self.iterations_since_save = 0
-        self.iterations_since_evaluation = 0
-        self.training_iteration_count = 0
+        self.last_target_update_iter_count = 0
+        self.last_save_iter_count = 0
+        self.last_evaluation_iter_count = 0
+        self.iter_count = 0
 
         if testing:
             self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
-                                              obs_seq_len=obs_seq_len, max_episodes=10)
+                                              obs_seq_len=obs_seq_len, max_episodes=100)
         else:
             self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
                                               obs_seq_len=obs_seq_len)
 
+        # checkpoint = Checkpoint(optimizer=optimizer)
+        # self.checkpoint_manager = CheckpointManager(checkpoint, checkpoint_dir, 1)
+        self.optimizer = optimizer
 
-class TrainingState:
-    def __init__(self, env, obs_seq_len=4, max_episodes=1_000, restore=False):
-        checkpoint = Checkpoint(optimizer=optimizer)
-        self.checkpoint_manager = CheckpointManager(checkpoint, checkpoint_dir, 1)
+        observation_shape = env.timestep_dtype['observation'].shape
+        input_shape = observation_shape + (obs_seq_len,)
 
-        if restore:
-            with open(pickleable_state_path, 'rb') as pickleable_state_file:
-                self.pts = pickle.load(pickleable_state_file)
+        self.model = get_q_net(input_shape, env.num_actions)
+        self.target_model = get_q_net(input_shape, env.num_actions)
 
-            # Re-create all of the memory maps
-            self.pts.replay_buffer.populate_episodes_deque()
+        self.model_config = None
+        self.model_weights_config = None
+        self.target_config = None
+        self.target_weights_config = None
 
-            self.model = keras.models.load_model(model_path)
-            self.target_model = keras.models.load_model(target_model_path)
+        # if restore:
+        #     with open(pickleable_state_path, 'rb') as pickleable_state_file:
+        #         self.pts = pickle.load(pickleable_state_file)
 
-            checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
+        #     # Re-create all of the memory maps
+        #     self.pts.replay_buffer.populate_episodes_deque()
 
-        else:
-            self.pts = PickleableTrainingState(replay_buffer_dir, env, obs_seq_len, max_episodes)
+        #     self.model = keras.models.load_model(model_path)
+        #     self.target_model = keras.models.load_model(target_model_path)
 
-            observation_shape = env.timestep_dtype['observation'].shape
-            input_shape = observation_shape + (obs_seq_len,)
-            self.model = get_q_net(input_shape, env.num_actions)
-            self.target_model = get_q_net(input_shape, env.num_actions)
+        #     checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
+
+        # else:
+        #     self.pts = PickleableTrainingState(replay_buffer_dir, env, obs_seq_len, max_episodes)
+
 
     def save(self):
         print('Saving training state...')
@@ -278,23 +257,77 @@ class TrainingState:
         # doesn't actually cause all of the memory maps to get garbage collected.
 
         # Stop all of the episode arrays from being included in the pickle file
-        episodes = self.pts.replay_buffer.episodes
-        self.pts.replay_buffer.episodes = deque()
+        episodes = self.replay_buffer.episodes
+        self.replay_buffer.episodes = deque()
+
+        self.model_config = keras.saving.serialize_keras_object(self.model)
+        self.model_weights_config = keras.saving.serialize_keras_object(self.model.get_weights())
+
+        self.target_config = keras.saving.serialize_keras_object(self.target_model)
+        self.target_weights_config = keras.saving.serialize_keras_object(
+                                        self.target_model.get_weights())
+
+        model = self.model
+        target_model = self.target_model
+
+        self.model = None
+        self.target_model = None
+
+        # self.model.save(model_path)
+        # self.target_model.save(target_model_path)
 
         with open(pickleable_state_path, 'wb') as pickleable_state_file:
             # pickleable_state_file : SupportsWrite[bytes]
-            pickle.dump(self.pts, pickleable_state_file)
+            pickle.dump(self, pickleable_state_file)
 
-        self.model.save(model_path)
-        self.target_model.save(target_model_path)
-
-        self.checkpoint_manager.save()
+        # self.checkpoint_manager.save()
 
         # Add all of the memmaps back in case we want to continue training
-        self.pts.replay_buffer.episodes = episodes
-        # episodes = None
+        self.replay_buffer.episodes = episodes
+
+        self.model = model
+        self.target_model = target_model
 
         print('... Done.')
+
+    def restore(self):
+        with open(pickleable_state_path, 'rb') as pickleable_state_file:
+            self = pickle.load(pickleable_state_file)
+
+        self.model = keras.saving.deserialize_keras_object(self.model_config)
+        self.model.set_weights(keras.saving.deserialize_keras_object(self.model_weights_config))
+
+        self.target_model = keras.saving.deserialize_keras_object(self.target_config)
+        self.target_model.set_weights(
+                          keras.saving.deserialize_keras_object(self.target_weights_config))
+
+        # Re-create all of the memory maps
+        self.replay_buffer.populate_episodes_deque()
+
+    def handle_new_episode(self, episode, terminated, q_predictions,
+                           q_prediction_step_counts, display_q):
+
+        # clip rewards
+        for i, reward in enumerate(episode['reward']):
+            episode['reward'][i] = min(1.0, reward)
+
+        if terminated:
+            episode['reward'][-1] = gameover_penalty
+
+        self.replay_buffer.add_episode(episode)
+
+        self.timestep_count += len(episode)
+        # self.timesteps_since_target_update += len(episode)
+        # self.timesteps_since_save += len(episode)
+        # self.timesteps_since_evaluation += len(episode)
+
+        episode_return = sum(episode['reward']) + np.float32(terminated)
+
+        self.episode_returns.append(episode_return)
+
+        display_q.put((episode['reward'], q_predictions, q_prediction_step_counts))
+
+        return episode_return
 
 
 def main():
@@ -316,21 +349,22 @@ def main():
     env = Env()
 
     # Wait for OpenCV warnings before starting console_listen thread
-    sleep(1)
+    sleep(2)
     thread.start()
 
     restore = console_queue.get()
 
+    ts = TrainingState(env)
+
     if restore:
         print('Restoring')
-
-    ts = TrainingState(env, restore=restore)
+        ts.restore()
 
     # Stops a warning when saving
     ts.model.compile()
     ts.target_model.compile()
 
-    print(f'len(replay_buffer): {len(ts.pts.replay_buffer)}')
+    print(f'len(replay_buffer): {len(ts.replay_buffer)}')
 
     print('sending first msg to agent')
     send_json_to_agent(ts, server_in_q)
@@ -351,7 +385,8 @@ def main():
 
     episode = np.array(episode, dtype=env.timestep_dtype)
 
-    handle_new_episode(ts, episode, terminated, q_predictions, q_prediction_step_counts, display_q)
+    ts.handle_new_episode(episode, terminated, q_predictions,
+                          q_prediction_step_counts, display_q)
 
     currently_evaluating = False
     evaluation_returns = []
@@ -395,7 +430,7 @@ def main():
             new_episode = False
 
         if new_episode:
-            episode_return = handle_new_episode(ts, episode, terminated, q_predictions, q_prediction_step_counts,
+            episode_return = ts.handle_new_episode(episode, terminated, q_predictions, q_prediction_step_counts,
                                                 display_q)
 
             if currently_evaluating:
@@ -403,14 +438,14 @@ def main():
                 evaluation_episode_count += 1
 
             print(
-                f'training_iteration_count: {ts.pts.training_iteration_count}, loss: {loss}, '
-                f'average return: {np.mean(ts.pts.episode_returns)}, timesteps collected: {ts.pts.timestep_count}')
+                f'iter_count: {ts.iter_count}, loss: {loss}, '
+                f'average return: {np.mean(ts.episode_returns)}, timesteps collected: {ts.timestep_count}')
 
             send_json_to_agent(ts, server_in_q, currently_evaluating)
 
         # Update the model once for every steps_per_model_update timesteps collected
         for _ in range(int(len(episode) / steps_per_model_update)):
-            observation_sample, observation_next_sample, action_sample, reward_sample = ts.pts.replay_buffer.get_batch()
+            observation_sample, observation_next_sample, action_sample, reward_sample = ts.replay_buffer.get_batch()
 
             # (batch, seq_len, width, height) -> (batch, width, height, seq_len)
             observation_sample = np.moveaxis(observation_sample, 1, -1)
@@ -434,23 +469,21 @@ def main():
             grads = tape.gradient(loss, ts.model.trainable_variables)
             optimizer.apply_gradients(zip(grads, ts.model.trainable_variables))
 
-            ts.pts.training_iteration_count += 1
-            ts.pts.iterations_since_target_update += 1
-            ts.pts.iterations_since_save += 1
-            ts.pts.iterations_since_evaluation += 1
+            ts.iter_count += 1
+            # ts.pts.iterations_since_target_update += 1
+            # ts.pts.iterations_since_save += 1
+            # ts.pts.iterations_since_evaluation += 1
 
-        # Setting the steps_since_* variable to zero causes us to go out of phase with multiples of the
-        # corresponding steps_per_* variable.
-        if ts.pts.iterations_since_target_update >= iterations_per_target_update:
-            ts.pts.iterations_since_target_update = ts.pts.iterations_since_target_update - iterations_per_target_update
+        if ts.iter_count - ts.last_target_update_iter_count >= iterations_per_target_update:
+            ts.last_target_update_iter_count = ts.iter_count
             ts.target_model.set_weights(ts.model.get_weights())
 
-        if ts.pts.iterations_since_save >= iterations_per_save:
-            ts.pts.iterations_since_save = ts.pts.iterations_since_save - iterations_per_save
+        if ts.iter_count - ts.last_save_iter_count >= iterations_per_save:
+            ts.last_save_iter_count = ts.iter_count
             ts.save()
 
-        if ts.pts.iterations_since_evaluation >= iterations_per_evaluation:
-            ts.pts.iterations_since_evaluation = ts.pts.iterations_since_evaluation - iterations_per_evaluation
+        if ts.iter_count - ts.last_evaluation_iter_count >= iterations_per_evaluation:
+            ts.last_evaluation_iter_count = ts.iter_count
             currently_evaluating = True
             print('Starting evaluation')
 
@@ -462,8 +495,10 @@ def main():
             evaluation_returns.clear()
 
             print(f'Evaluation average return: {evaluation_return}')
-            if evaluation_return > ts.pts.best_average_return:
-                ts.pts.best_average_return = evaluation_return
+
+            if evaluation_return > ts.best_average_return:
+                ts.best_average_return = evaluation_return
+
                 print('Saving best model')
                 ts.model.save(best_model_path)
 

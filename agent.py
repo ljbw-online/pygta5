@@ -7,8 +7,7 @@ from websockets import ConnectionClosedError
 # from websockets.sync.server import serve
 from websockets.sync.client import connect
 
-from common import imshow, display_episode
-from dqn import Env, obs_seq_len, get_q_net, websocket_port, run_episode, QFunction
+from trainer import Env, obs_seq_len, get_q_net, websocket_port, run_episode, QFunction
 
 
 # def echo(websocket):
@@ -97,3 +96,4 @@ def client():
 
 if __name__ == "__main__":
     client()
+

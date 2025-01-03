@@ -1,11 +1,18 @@
 from collections import deque
 
-import keras
 import numpy as np
 import cv2
-from keras import layers
 
 # File can't be called 'numbers.py' because Python gets confused about imports
+
+# A previous version of this env had a progress bar at the top of the observation. This
+# seemed to significantly slow down training, I assume because it increased the number of
+# distinct observations.
+
+# With a delay of 3 the agent has to choose the action displayed 3 frames ago. In other
+# words the first frame in a 4-frame deque. If sparsity is 1 then reward will be 1.0 if
+# the action is correct and 0.0 otherwise. If sparsity is e.g. 4 then every 4 steps the
+# reward will be (num of correct answers in last 4 steps) / 4.
 
 env_name = 'numbers'
 gamma = 0.56
@@ -20,7 +27,7 @@ max_return = sparse_reward_sequences_per_episode * np.float32(1.0)
 
 
 class Env:
-    def __init__(self, eval_mode=False, progress_bar=False, num_actions=2, sparsity=1, delay=0):
+    def __init__(self, eval_mode=False, num_actions=2, sparsity=4, delay=3):
         if num_actions < 1 or num_actions > 10:
             raise ValueError('num_actions must be between 1 and 10 inclusive')
 
@@ -43,10 +50,6 @@ class Env:
         self.eval_mode = eval_mode
         self.current_observation = None
         self.sparsity = sparsity
-        self.progress_bar = progress_bar
-
-        if progress_bar and sparsity > 16:
-            raise ValueError('Observation not wide enough for progress bar')
 
         self.step_count = 0
         self.delay = delay
@@ -73,14 +76,11 @@ class Env:
         self.current_observation = observation
 
         if self.eval_mode:
-            print(f'New episode,   random_number: {random_number}')
+            print(f'New episode,   randomly selected number: {random_number}')
 
         return observation
 
     def step(self, action):
-        if self.progress_bar:
-            self.images[:, 0, self.step_count % self.sparsity] = 1
-
         self.step_count += 1
 
         delayed_number = self.previous_numbers.popleft()
@@ -102,11 +102,14 @@ class Env:
             if (self.step_count - self.delay) % self.sparsity == 0:
                 reward = self.correct_count / self.sparsity
                 self.correct_count = np.float32(0)
-                self.images[:, 0, :self.sparsity] = 0
 
         if self.eval_mode:
-            print(f'received action: {action}, delayed_number {delayed_number}, random_number: {random_number}, '
-                  f'correct_action: {action_was_correct}, 'f'reward: {reward}')
+            print(
+                f'received action: {action}, '
+                f'number selected {self.delay + 1} steps ago: {delayed_number}, '
+                f'hence action_was_correct: {action_was_correct}, and reward: {reward}\n'
+                f'number selected on this step: {random_number}, '
+            )
 
         return observation, reward, False
 
@@ -119,13 +122,6 @@ class Env:
             frame = self.current_observation
             cv2.imshow(env_name, frame)
             cv2.waitKey(1)
-
-    def create_q_net(self):
-        inputs = layers.Input(shape=(16, 16))
-        flatten = layers.Flatten()(inputs)
-        dense = layers.Dense(128, activation='relu')(flatten)
-        q_values = layers.Dense(self.num_actions, activation='linear')(dense)
-        return keras.Model(inputs=inputs, outputs=q_values)
 
     def pause(self):
         return
@@ -156,9 +152,6 @@ def test_env():
             pass
 
         observation_next, reward, terminated = env.step(action)
-
-        # print(reward)
-        # cv2.imshow('next', observation_next)
 
         observation = observation_next
 

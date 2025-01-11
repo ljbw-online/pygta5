@@ -56,9 +56,10 @@ def client():
 
         trainer_dict = json.loads(trainer_msg)
         epsilon = trainer_dict['epsilon']
-        weights = keras.saving.deserialize_keras_object(trainer_dict['weights_config'])
 
-        model.set_weights(weights)
+        if trainer_dict['weights_config'] is not None:
+            weights = keras.saving.deserialize_keras_object(trainer_dict['weights_config'])
+            model.set_weights(weights)
 
         while True:
             before_ep = time()
@@ -87,9 +88,12 @@ def client():
                 trainer_dict = json.loads(websocket.recv())
             except ConnectionClosedError:
                 return
+
             epsilon = trainer_dict['epsilon']
-            weights = keras.saving.deserialize_keras_object(trainer_dict['weights_config'])
-            model.set_weights(weights)
+
+            if trainer_dict['weights_config'] is not None:
+                weights = keras.saving.deserialize_keras_object(trainer_dict['weights_config'])
+                model.set_weights(weights)
             # except TimeoutError:
             #     print('no new weights, continuing')
 

@@ -15,7 +15,7 @@ import cv2
 # reward will be (num of correct answers in last 4 steps) / 4.
 
 env_name = 'numbers'
-gamma = 0.56
+gamma = 0.1
 epsilon_max = 0.1
 
 random_eval_action = None
@@ -27,7 +27,7 @@ max_return = sparse_reward_sequences_per_episode * np.float32(1.0)
 
 
 class Env:
-    def __init__(self, eval_mode=False, num_actions=2, sparsity=4, delay=3):
+    def __init__(self, eval_mode=False, num_actions=2, sparsity=1, delay=3):
         if num_actions < 1 or num_actions > 10:
             raise ValueError('num_actions must be between 1 and 10 inclusive')
 

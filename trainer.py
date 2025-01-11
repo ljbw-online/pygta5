@@ -31,14 +31,15 @@ from tensorflow.train import Checkpoint, CheckpointManager
 rng = np.random.default_rng()
 websocket_port = 7001
 
-testing = True
+testing = False
 if testing:
     from environments.numbers_env import Env, gamma, epsilon_max, action_labels, env_name
     epsilon_interval = 2_500
     iterations_per_save = 500
     iterations_per_evaluation = 250
     num_eval_episodes = 3
-    evaluation_epsilon = 1.0
+    evaluation_epsilon = 0.0
+    iterations_per_target_update = 100
 else:
     epsilon_max = 1.0
     epsilon_interval = 250_000
@@ -46,12 +47,12 @@ else:
     iterations_per_evaluation = 125_000
     num_eval_episodes = 30
     evaluation_epsilon = 0.05
+    iterations_per_target_update = 10_000
 
 epsilon_min = 0.1
 epsilon_range = epsilon_max - epsilon_min
 batch_size = 32
 steps_per_model_update = 2 / 3  # 3 updates for 2 timesteps
-iterations_per_target_update = 10_000
 loss_function = keras.losses.Huber()
 optimizer = keras.optimizers.Adam(learning_rate=1e-5, clipnorm=1.0)
 gameover_penalty = np.float32(-1.0)
@@ -187,13 +188,13 @@ def run_server(inq, outq):
         server.serve_forever()
 
 
-def send_json_to_agent(ts, server_in_q, currently_evaluating=False):
-    if currently_evaluating:
+def send_json_to_agent(ts, server_in_q):
+    if ts.currently_evaluating:
         epsilon = evaluation_epsilon
+        weights_config = None
     else:
         epsilon = max(epsilon_max - epsilon_range * (ts.timestep_count / epsilon_interval), epsilon_min)
-
-    weights_config = keras.saving.serialize_keras_object(ts.model.get_weights())
+        weights_config = keras.saving.serialize_keras_object(ts.model.get_weights())
 
     data_for_agent = {'epsilon': epsilon, 'weights_config': weights_config}
     json_for_agent = json.dumps(data_for_agent)
@@ -209,6 +210,7 @@ class TrainingState:
         self.last_target_update_iter_count = 0
         self.last_save_iter_count = 0
         self.last_evaluation_iter_count = 0
+        self.currently_evaluating = False
         self.iter_count = 0
 
         if testing:
@@ -388,7 +390,6 @@ def main():
     ts.handle_new_episode(episode, terminated, q_predictions,
                           q_prediction_step_counts, display_q)
 
-    currently_evaluating = False
     evaluation_returns = []
     evaluation_episode_count = 0
     key = ''
@@ -433,7 +434,7 @@ def main():
             episode_return = ts.handle_new_episode(episode, terminated, q_predictions, q_prediction_step_counts,
                                                 display_q)
 
-            if currently_evaluating:
+            if ts.currently_evaluating:
                 evaluation_returns.append(episode_return)
                 evaluation_episode_count += 1
 
@@ -441,56 +442,60 @@ def main():
                 f'iter_count: {ts.iter_count}, loss: {loss}, '
                 f'average return: {np.mean(ts.episode_returns)}, timesteps collected: {ts.timestep_count}')
 
-            send_json_to_agent(ts, server_in_q, currently_evaluating)
+            send_json_to_agent(ts, server_in_q)
 
-        # Update the model once for every steps_per_model_update timesteps collected
-        for _ in range(int(len(episode) / steps_per_model_update)):
-            observation_sample, observation_next_sample, action_sample, reward_sample = ts.replay_buffer.get_batch()
+        if ts.currently_evaluating:
+            print('waiting for eval ep')
+            sleep(1)
+        else:
+            # Update the model once for every steps_per_model_update timesteps collected
+            for _ in range(int(len(episode) / steps_per_model_update)):
+                observation_sample, observation_next_sample, action_sample, reward_sample = ts.replay_buffer.get_batch()
 
-            # (batch, seq_len, width, height) -> (batch, width, height, seq_len)
-            observation_sample = np.moveaxis(observation_sample, 1, -1)
-            observation_next_sample = np.moveaxis(observation_next_sample, 1, -1)
+                # (batch, seq_len, width, height) -> (batch, width, height, seq_len)
+                observation_sample = np.moveaxis(observation_sample, 1, -1)
+                observation_next_sample = np.moveaxis(observation_next_sample, 1, -1)
 
-            future_actions = tf.argmax(ts.model.predict(observation_next_sample, verbose=0), axis=1)
-            future_onehot_actions = tf.one_hot(future_actions, env.num_actions)
+                future_actions = tf.argmax(ts.model.predict(observation_next_sample, verbose=0), axis=1)
+                future_onehot_actions = tf.one_hot(future_actions, env.num_actions)
 
-            future_value_estimates = ts.target_model.predict(observation_next_sample, verbose=0)
-            future_action_values = tf.reduce_sum(tf.multiply(future_value_estimates, future_onehot_actions), axis=1)
+                future_value_estimates = ts.target_model.predict(observation_next_sample, verbose=0)
+                future_action_values = tf.reduce_sum(tf.multiply(future_value_estimates, future_onehot_actions), axis=1)
 
-            updated_q_values = reward_sample + gamma * future_action_values
+                updated_q_values = reward_sample + gamma * future_action_values
 
-            onehot_actions = tf.one_hot(action_sample, env.num_actions)
+                onehot_actions = tf.one_hot(action_sample, env.num_actions)
 
-            with tf.GradientTape() as tape:
-                q_values = ts.model(observation_sample)
-                q_action = tf.reduce_sum(tf.multiply(q_values, onehot_actions), axis=1)
-                loss = loss_function(updated_q_values, q_action)
+                with tf.GradientTape() as tape:
+                    q_values = ts.model(observation_sample)
+                    q_action = tf.reduce_sum(tf.multiply(q_values, onehot_actions), axis=1)
+                    loss = loss_function(updated_q_values, q_action)
 
-            grads = tape.gradient(loss, ts.model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, ts.model.trainable_variables))
+                grads = tape.gradient(loss, ts.model.trainable_variables)
+                optimizer.apply_gradients(zip(grads, ts.model.trainable_variables))
 
-            ts.iter_count += 1
-            # ts.pts.iterations_since_target_update += 1
-            # ts.pts.iterations_since_save += 1
-            # ts.pts.iterations_since_evaluation += 1
+                ts.iter_count += 1
+                # ts.pts.iterations_since_target_update += 1
+                # ts.pts.iterations_since_save += 1
+                # ts.pts.iterations_since_evaluation += 1
 
-        if ts.iter_count - ts.last_target_update_iter_count >= iterations_per_target_update:
-            ts.last_target_update_iter_count = ts.iter_count
-            ts.target_model.set_weights(ts.model.get_weights())
+            if ts.iter_count - ts.last_target_update_iter_count >= iterations_per_target_update:
+                ts.last_target_update_iter_count = ts.iter_count
+                ts.target_model.set_weights(ts.model.get_weights())
 
-        if ts.iter_count - ts.last_save_iter_count >= iterations_per_save:
-            ts.last_save_iter_count = ts.iter_count
-            ts.save()
+            if ts.iter_count - ts.last_save_iter_count >= iterations_per_save:
+                ts.last_save_iter_count = ts.iter_count
+                ts.save()
 
-        if ts.iter_count - ts.last_evaluation_iter_count >= iterations_per_evaluation:
-            ts.last_evaluation_iter_count = ts.iter_count
-            currently_evaluating = True
-            print('Starting evaluation')
+            if ts.iter_count - ts.last_evaluation_iter_count >= iterations_per_evaluation:
+                ts.last_evaluation_iter_count = ts.iter_count
+                ts.currently_evaluating = True
+                print('Starting evaluation')
 
         if evaluation_episode_count == num_eval_episodes:
             evaluation_return = np.mean(evaluation_returns)
 
-            currently_evaluating = False
+            ts.currently_evaluating = False
             evaluation_episode_count = 0
             evaluation_returns.clear()
 

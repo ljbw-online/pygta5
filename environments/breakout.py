@@ -3,8 +3,7 @@ from collections import deque
 import cv2
 import numpy as np
 import gymnasium as gym
-# import keras
-# from keras import layers
+import ale_py
 
 from common import resize
 
@@ -27,13 +26,14 @@ epsilon_max = 1.0
 # max_steps_per_episode = 100_000
 action_labels = ['nothing', 'start', '-->', '<--']
 
+gym.register_envs(ale_py)
 
 class Env:
     def __init__(self):
         self.name = env_name
         self.random_eval_action = 1
         self.max_return = None
-        self.env = gym.make('BreakoutNoFrameskip-v4')
+        self.env = gym.make('ALE/Breakout-v5')
         self.num_actions = 4
         self.max_steps_per_episode = 100_000
         self.evaluation_epsilon = 0.05

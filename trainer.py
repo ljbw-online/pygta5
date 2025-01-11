@@ -9,6 +9,8 @@ from multiprocessing import Process, Queue
 
 import cv2
 import numpy as np
+import tensorflow as tf
+import keras
 from websockets.sync.server import serve
 
 from common import get_save_path
@@ -17,13 +19,6 @@ from q_networks import QFunction
 from q_networks import dueling_architecture as get_q_net
 from replay_buffer import ReplayBuffer
 from environments.breakout import Env, gamma, action_labels, env_name
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
-import tensorflow as tf
-import keras
-from tensorflow.train import Checkpoint, CheckpointManager
-# from tensorflow.python.training.checkpoint_management import CheckpointManager
-# from tensorflow.python.training.tracking.util import Checkpoint
 
 # TensorFlow versions newer than 2.9 seem to have a memory leak somewhere in the model training code, e.g. in model.fit
 # and optimizer.apply_gradients
@@ -220,8 +215,6 @@ class TrainingState:
             self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
                                               obs_seq_len=obs_seq_len)
 
-        # checkpoint = Checkpoint(optimizer=optimizer)
-        # self.checkpoint_manager = CheckpointManager(checkpoint, checkpoint_dir, 1)
         self.optimizer = optimizer
 
         observation_shape = env.timestep_dtype['observation'].shape
@@ -234,22 +227,6 @@ class TrainingState:
         self.model_weights_config = None
         self.target_config = None
         self.target_weights_config = None
-
-        # if restore:
-        #     with open(pickleable_state_path, 'rb') as pickleable_state_file:
-        #         self.pts = pickle.load(pickleable_state_file)
-
-        #     # Re-create all of the memory maps
-        #     self.pts.replay_buffer.populate_episodes_deque()
-
-        #     self.model = keras.models.load_model(model_path)
-        #     self.target_model = keras.models.load_model(target_model_path)
-
-        #     checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
-
-        # else:
-        #     self.pts = PickleableTrainingState(replay_buffer_dir, env, obs_seq_len, max_episodes)
-
 
     def save(self):
         print('Saving training state...')
@@ -275,14 +252,8 @@ class TrainingState:
         self.model = None
         self.target_model = None
 
-        # self.model.save(model_path)
-        # self.target_model.save(target_model_path)
-
         with open(pickleable_state_path, 'wb') as pickleable_state_file:
-            # pickleable_state_file : SupportsWrite[bytes]
             pickle.dump(self, pickleable_state_file)
-
-        # self.checkpoint_manager.save()
 
         # Add all of the memmaps back in case we want to continue training
         self.replay_buffer.episodes = episodes
@@ -319,9 +290,6 @@ class TrainingState:
         self.replay_buffer.add_episode(episode)
 
         self.timestep_count += len(episode)
-        # self.timesteps_since_target_update += len(episode)
-        # self.timesteps_since_save += len(episode)
-        # self.timesteps_since_evaluation += len(episode)
 
         episode_return = sum(episode['reward']) + np.float32(terminated)
 

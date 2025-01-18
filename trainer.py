@@ -20,13 +20,11 @@ from q_networks import dueling_architecture as get_q_net
 from replay_buffer import ReplayBuffer
 from environments.breakout import Env, gamma, action_labels, env_name
 
-# TensorFlow versions newer than 2.9 seem to have a memory leak somewhere in the model training code, e.g. in model.fit
-# and optimizer.apply_gradients
-
 rng = np.random.default_rng()
 websocket_port = 7001
 
 testing = False
+ask_to_restore = True
 if testing:
     from environments.numbers_env import Env, gamma, epsilon_max, action_labels, env_name
     epsilon_interval = 2_500
@@ -72,8 +70,9 @@ def average_return(num_episodes, environment, q_function):
 
 def console_listen(console_q):
     choice = 'n'
-    if os.path.isdir(replay_buffer_dir):
-        choice = input('Restore from disc? (Y/n)')
+
+    if ask_to_restore and  os.path.isdir(replay_buffer_dir):
+            choice = input('Restore from disc? (Y/n)')
 
     restore = choice != 'n'
 
@@ -209,10 +208,10 @@ class TrainingState:
         self.iter_count = 0
 
         if testing:
-            self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
-                                              obs_seq_len=obs_seq_len, max_episodes=100)
+            self.replay_buffer = ReplayBuffer(env.name, env.timestep_dtype,
+                                              obs_seq_len=obs_seq_len, max_length=1_000)
         else:
-            self.replay_buffer = ReplayBuffer(replay_buffer_dir, env.name, env.timestep_dtype,
+            self.replay_buffer = ReplayBuffer(env.name, env.timestep_dtype,
                                               obs_seq_len=obs_seq_len)
 
         self.optimizer = optimizer
@@ -231,14 +230,6 @@ class TrainingState:
     def save(self):
         print('Saving training state...')
 
-        # We've seen "OSError: too many open files" when saving. Maybe because this:
-        # self.pts.replay_buffer.episodes.clear()
-        # doesn't actually cause all of the memory maps to get garbage collected.
-
-        # Stop all of the episode arrays from being included in the pickle file
-        episodes = self.replay_buffer.episodes
-        self.replay_buffer.episodes = deque()
-
         self.model_config = keras.saving.serialize_keras_object(self.model)
         self.model_weights_config = keras.saving.serialize_keras_object(self.model.get_weights())
 
@@ -254,9 +245,6 @@ class TrainingState:
 
         with open(pickleable_state_path, 'wb') as pickleable_state_file:
             pickle.dump(self, pickleable_state_file)
-
-        # Add all of the memmaps back in case we want to continue training
-        self.replay_buffer.episodes = episodes
 
         self.model = model
         self.target_model = target_model
@@ -274,8 +262,6 @@ class TrainingState:
         self.target_model.set_weights(
                           keras.saving.deserialize_keras_object(self.target_weights_config))
 
-        # Re-create all of the memory maps
-        self.replay_buffer.populate_episodes_deque()
 
     def handle_new_episode(self, episode, terminated, q_predictions,
                            q_prediction_step_counts, display_q):
@@ -377,6 +363,7 @@ def main():
                 save_choice  = console_queue.get()
 
                 # Not saving here stops restoring from working later due to the replay buffer implementation
+                # Do we still need to save here?
                 if save_choice  != 'n':
                     ts.save()
 
@@ -385,7 +372,6 @@ def main():
                 break
 
         try:
-            # episode, terminated, q_predictions, q_prediction_step_counts = run_episode(env, q_function, epsilon)
             episode, terminated, q_predictions, q_prediction_step_counts = json.loads(server_out_q.get(block=False))
 
             for i, timestep_list in enumerate(episode):
@@ -443,9 +429,6 @@ def main():
                 optimizer.apply_gradients(zip(grads, ts.model.trainable_variables))
 
                 ts.iter_count += 1
-                # ts.pts.iterations_since_target_update += 1
-                # ts.pts.iterations_since_save += 1
-                # ts.pts.iterations_since_evaluation += 1
 
             if ts.iter_count - ts.last_target_update_iter_count >= iterations_per_target_update:
                 ts.last_target_update_iter_count = ts.iter_count

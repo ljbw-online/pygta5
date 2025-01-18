@@ -14,11 +14,11 @@ chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/='
 secret_sequence = [1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0,
                    0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1]
 
-window_name = 'OpenCV'
+window_name = 'secret_sequence'
 
 
 class Env:
-    def __init__(self, eval_mode=False, num_actions=2, depth=3, named_window=False):
+    def __init__(self, eval_mode=False, num_actions=2, depth=6, named_window=False):
         self.max_steps_per_episode = 6
         self.max_return = floor(self.max_steps_per_episode / depth)
         self.name = 'secret_sequence'
@@ -48,7 +48,8 @@ class Env:
 
         assert len(self.secret_sequence) == depth + 1
 
-        cv2.namedWindow(window_name)
+        if named_window:
+            cv2.namedWindow(window_name)
 
         if num_actions != 2:
             raise NotImplementedError('Only 2 actions supported currently')
@@ -109,6 +110,9 @@ class Env:
         dense = layers.Dense(128, activation='relu')(flatten)
         q_values = layers.Dense(self.num_actions, activation='linear')(dense)
         return keras.Model(inputs=inputs, outputs=q_values)
+
+    def pause(self):
+        pass
 
     def close(self):
         cv2.destroyAllWindows()

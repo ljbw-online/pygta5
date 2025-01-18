@@ -393,8 +393,8 @@ def main():
                 evaluation_episode_count += 1
 
             print(
-                f'iter_count: {ts.iter_count}, loss: {loss}, '
-                f'average return: {np.mean(ts.episode_returns)}, timesteps collected: {ts.timestep_count}')
+                f'iter_count: {ts.iter_count}, loss: {loss :.3}, '
+                f'average return: {np.mean(ts.episode_returns) :.3}, timesteps collected: {ts.timestep_count}')
 
             send_json_to_agent(ts, server_in_q)
 

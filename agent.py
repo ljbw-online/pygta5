@@ -64,7 +64,7 @@ def client():
         while True:
             before_ep = time()
             episode, terminated, q_predictions, q_prediction_step_counts = run_episode(env, q_function, epsilon)
-            print(f'ran ep in {time() - before_ep}s')
+            print(f'Ran episode in {time() - before_ep :.3}s')
 
             timestep_tuple_list = episode.tolist()
 
@@ -79,11 +79,8 @@ def client():
 
             json_for_server = json.dumps(tuple_for_server)
 
-            print('sending ep')
             websocket.send(json_for_server)
 
-            # try:
-            print('waiting for new weights')
             try:
                 trainer_dict = json.loads(websocket.recv())
             except ConnectionClosedError:
@@ -94,8 +91,6 @@ def client():
             if trainer_dict['weights_config'] is not None:
                 weights = keras.saving.deserialize_keras_object(trainer_dict['weights_config'])
                 model.set_weights(weights)
-            # except TimeoutError:
-            #     print('no new weights, continuing')
 
 
 if __name__ == "__main__":
